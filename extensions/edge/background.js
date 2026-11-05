@@ -1,5 +1,6 @@
-// Habits domain journal: top-level navigations + active-tab attention only.
-// No content scripts, page titles, URL paths/queries, cookies, or network upload.
+// Habits browser journal: top-level URL/title metadata and active-tab attention.
+// No content scripts, page bodies, DOM inspection, or network upload.
+// The extension/bridge are optional: their absence never affects habagent.exe.
 'use strict';
 const HOST_NAME = 'org.jferments.habits';
 const BROWSER_NAME = (typeof browser !== 'undefined' && typeof browser.runtime !== 'undefined')
@@ -7,7 +8,20 @@ const BROWSER_NAME = (typeof browser !== 'undefined' && typeof browser.runtime !
 const MAX_QUEUED = 20000;
 const state = { queue:[], ready:false, saving:false, dirty:false,
     inflight:null, port:null, reconnect:null, lastFocus:null,
-    lastPulse:0, lastVisits:new Map(), overflow:false };
+    lastPulse:0, lastVisits:new Map(), lastTitles:new Map(), overflow:false };
+
+function safePageUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+        // Strip URL-embedded credentials, but preserve paths, queries and hashes:
+        // they can be part of the page identity (and may contain sensitive data).
+        parsed.username='';
+        parsed.password='';
+        const value=parsed.toString();
+        return value.length <= 16384 ? value : null;
+    } catch (_) { return null; }
+}
 
 function hostOf(rawUrl) {
     try {
@@ -24,7 +38,7 @@ function eventId() {
     return String(Date.now()) + '-' + Math.random().toString(36).slice(2);
 }
 
-function enqueue(kind, host, tab) {
+function enqueue(kind, host, tab, metadata=null) {
     if (kind !== 'blur' && !host) return;
     const item = {
         id:eventId(), browser:BROWSER_NAME, kind,
@@ -32,6 +46,10 @@ function enqueue(kind, host, tab) {
         tab_id:tab && typeof tab.id === 'number' ? tab.id : null,
         window_id:tab && typeof tab.windowId === 'number' ? tab.windowId : null
     };
+    if (metadata && (kind === 'visit' || kind === 'title')) {
+        item.url=metadata.url;
+        if (metadata.title !== undefined) item.title=metadata.title;
+    }
     state.queue.push(item);
     if (state.queue.length > MAX_QUEUED) {
         // A disconnected host must not grow storage without bound. Keep the
@@ -105,20 +123,36 @@ function sendNext() {
 function recordVisit(details) {
     if (typeof details.tabId !== 'number' || details.tabId < 0 ||
         (typeof details.frameId === 'number' && details.frameId !== 0)) return;
-    const host=hostOf(details.url);
+    const pageUrl=safePageUrl(details.url);
+    if (!pageUrl) return;
+    const host=hostOf(pageUrl);
     if (!host) return;
-    const key=details.tabId + ':' + host;
+    const key=details.tabId + ':' + pageUrl;
     const now=Date.now();
     // Prevent duplicate navigation events for a single redirect/commit.
-    if (now - (state.lastVisits.get(key) || 0) < 1200) return;
+    if (now - (state.lastVisits.get(key) || 0) < 250) return;
     state.lastVisits.set(key,now);
     if (state.lastVisits.size > 1024) state.lastVisits.clear();
 
     chrome.tabs.get(details.tabId,tab => {
         if (chrome.runtime.lastError || !tab || tab.incognito) return;
-        enqueue('visit',host,tab);
+        enqueue('visit',host,tab,{url:pageUrl});
         if (tab.active) syncAttention();
     });
+}
+
+function recordTitle(tab) {
+    if (!tab || tab.incognito || typeof tab.title !== 'string' || !tab.title) return;
+    const pageUrl=safePageUrl(tab.url);
+    const host=pageUrl && hostOf(pageUrl);
+    if (!host) return;
+    const title=tab.title.replace(/[\\u0000-\\u001f\\u007f]/g, '').slice(0,2048);
+    if (!title) return;
+    const key=tab.id + ':' + pageUrl + ':' + title;
+    if (state.lastTitles.has(key)) return;
+    state.lastTitles.set(key,Date.now());
+    if (state.lastTitles.size > 1024) state.lastTitles.clear();
+    enqueue('title',host,tab,{url:pageUrl,title});
 }
 
 function blur() {
@@ -160,7 +194,8 @@ function syncAttention() {
 chrome.webNavigation.onCommitted.addListener(recordVisit);
 chrome.webNavigation.onHistoryStateUpdated.addListener(recordVisit);
 chrome.tabs.onActivated.addListener(syncAttention);
-chrome.tabs.onUpdated.addListener((id, change) => {
+chrome.tabs.onUpdated.addListener((id, change, tab) => {
+    if (change.title || change.status === 'complete') recordTitle(tab);
     if (change.url || change.status === 'complete') syncAttention();
 });
 chrome.tabs.onRemoved.addListener(syncAttention);
