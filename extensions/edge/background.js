@@ -32,8 +32,8 @@ function hostOf(rawUrl) {
 }
 
 function eventId() {
-    if (globalThis.crypto && typeof crypto.randomUUID === 'function') {
-        return crypto.randomUUID();
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+        return globalThis.crypto.randomUUID();
     }
     return String(Date.now()) + '-' + Math.random().toString(36).slice(2);
 }
