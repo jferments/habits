@@ -1,5 +1,5 @@
 //! Windows WebExtension native messaging host. Only receives sanitized domain events.
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
