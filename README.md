@@ -109,6 +109,31 @@ notifications. It launches at each logon. Sysmon itself runs as a system service
 so its logging can continue when this per-user agent is not running, subject to
 the Event Log channel's retention/rollover.
 
+### Installation visibility (intentional)
+
+Habits is deliberately a **per-user background startup task**, not an entry in
+**Settings > Apps > Installed apps** (or **Add or Remove Programs**). The
+installer does not create a Windows `Uninstall` registry entry, MSI/MSIX
+package, Start menu shortcut, or system-tray application. The only regular
+startup registration it creates is the `HabitsCollector` scheduled task,
+which is visible and manageable in Task Scheduler. The installer also adds
+the CLI folder to the *user* PATH so `habits` works in a terminal.
+
+A scheduled task is preferable to a Session 0 Windows service for foreground
+window and idle tracking: `habagent.exe` needs to run in your interactive
+user session. It starts at **user logon**, not before you sign in. Sysmon is
+a separate Microsoft component and runs as a system service.
+
+To stop auto-start and remove the collector binaries explicitly:
+
+```powershell
+.\installer\uninstall.ps1 -RemoveBinaries
+```
+
+The uninstaller leaves the activity database and Sysmon untouched. The
+scheduled task is not hidden: it should be easy to discover and disable
+whenever you choose. No popups or Add/Remove Programs entry are needed.
+
 If your PowerShell execution policy blocks the installer, review the script
 before allowing it to run. Don't disable execution policy system-wide.
 
