@@ -25,11 +25,12 @@ jobs:
         run: |
           if (!(Test-Path target/release/habits.exe)) { throw 'Missing habits.exe' }
           if (!(Test-Path target/release/habagent.exe)) { throw 'Missing habagent.exe' }
+          if (!(Test-Path target/release/habbridge.exe)) { throw 'Missing habbridge.exe' }
           if (Test-Path target/release/habits-agent.exe) { throw 'Legacy agent binary exists' }
       - name: Validate setup scripts and Sysmon config
         shell: pwsh
         run: |
-          foreach ($file in @('setup.ps1', 'installer/setup-sysmon.ps1', 'installer/install.ps1', 'installer/uninstall.ps1', 'installer/doctor.ps1')) {
+          foreach ($file in @('setup.ps1', 'installer/setup-sysmon.ps1', 'installer/install.ps1', 'installer/uninstall.ps1', 'installer/doctor.ps1', 'installer/register-browser-hosts.ps1')) {
             $tokens = $null
             $errors = $null
             $null = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors)
@@ -50,3 +51,22 @@ jobs:
           if ($settings.DisallowStartIfOnBatteries) { throw 'Battery must not block startup' }
           if ($settings.StopIfGoingOnBatteries) { throw 'Battery must not stop collector' }
           if (-not $settings.StartWhenAvailable) { throw 'Missed logon should allow task startup' }
+      - name: Check Firefox and Edge extension source
+        shell: pwsh
+        run: |
+          foreach ($browser in @('firefox','edge')) {
+            $dir = "extensions/$browser"
+            $manifest = Get-Content -LiteralPath "$dir/manifest.json" -Raw | ConvertFrom-Json
+            if ($manifest.manifest_version -ne 3) { throw "$browser manifest is not MV3" }
+            if ('nativeMessaging' -notin $manifest.permissions) { throw "$browser requires nativeMessaging" }
+            if ('webNavigation' -notin $manifest.permissions) { throw "$browser requires webNavigation" }
+            & node --check "$dir/background.js"
+            if ($LASTEXITCODE -ne 0) { throw "$browser background.js syntax error" }
+          }
+          $firefox=Get-Content extensions/firefox/manifest.json -Raw | ConvertFrom-Json
+          if ($firefox.browser_specific_settings.gecko.id -ne 'habits-domain-journal@jferments.local') {
+            throw 'Firefox ID and native host allowlist do not match'
+          }
+          if ((Get-FileHash extensions/firefox/background.js).Hash -ne (Get-FileHash extensions/edge/background.js).Hash) {
+            throw 'Cross-browser background code diverged'
+          }
