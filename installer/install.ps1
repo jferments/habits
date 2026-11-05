@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param(
     [switch]$ConfigureSysmon,
-    [string]$SysmonExe = 'Sysmon64.exe'
+    [string]$SysmonExe = 'Sysmon64.exe',
+    [switch]$SkipSysmonReminder
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -24,8 +25,22 @@ if ($CurrentTask) {
     Stop-ScheduledTask -TaskName 'HabitsCollector' -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 600
 }
-Copy-Item $SourceCli $Install -Force
-Copy-Item $SourceAgent $Install -Force
+# A stopped task may take a moment to release the executable during upgrades.
+# Retry the copy rather than failing spuriously with a file-in-use error.
+foreach ($Source in @($SourceCli, $SourceAgent)) {
+    $Destination = Join-Path $Install (Split-Path -Leaf $Source)
+    $Copied = $false
+    for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
+        try {
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+            $Copied = $true
+            break
+        } catch [System.IO.IOException] {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if (-not $Copied) { throw "Could not update $Destination. Stop HabitsCollector and try again." }
+}
 $AgentPath = Join-Path $Install 'habagent.exe'
 # Run on the current user's next logon. The agent has Windows GUI subsystem,
 # intentionally no console window; scheduler process does not require elevation.
@@ -53,6 +68,6 @@ Write-Host 'Task: HabitsCollector (runs quietly at the next interactive logon)'
 Write-Host 'No Installed Apps / Add or Remove Programs entry is registered.'
 Write-Host 'Run now: Start-ScheduledTask -TaskName HabitsCollector'
 Write-Host 'Open a new terminal, then: habits status'
-if (!$ConfigureSysmon) {
-    Write-Warning 'Sysmon was NOT installed/configured. See README.md; DNS/connection telemetry requires Sysmon configured separately.'
+if (!$ConfigureSysmon -and !$SkipSysmonReminder) {
+    Write-Warning 'This installer does not configure Sysmon. Use .\\setup.ps1 for automated Sysmon setup and startup.'
 }
