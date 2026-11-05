@@ -76,9 +76,9 @@ cannot be assumed to be installed/authorized just because `setup.ps1` succeeded.
   end timestamps. The add-on sends focus changes and approximately
   30-second heartbeats. On abrupt exit or sleep, an interval never counts
   more than 45 seconds past its last heartbeat.
-- `app_domain_minutes`: **non-browser DNS lookup observations**, not
-  confirmed connections, bucketed by process executable/host/minute.
-- `app_connection_hours`: **non-browser network connection counts**,
+- `app_domain_minutes`: **per-app DNS lookup observations**, including
+  Firefox/Edge as a fallback; not confirmed visits or connections, bucketed by process executable/host/minute.
+- `app_connection_hours`: **per-app network connection counts** (including browsers),
   bucketed by executable/IP/port/protocol/hour. An IP cannot safely be
   equated to a domain when CDNs, DNS caches and encrypted DNS are involved.
 
@@ -126,8 +126,8 @@ connected to it; `habagent.exe` remains the quiet startup collector.
 The standalone `habagent.exe` task **never depends on Firefox, Edge, any
 extension, or the native messaging process**. If an extension crashes, is
 disabled, is removed, loses access, or fails to start, the agent continues
-to collect foreground activity, software changes, and Sysmon rollups.
-No browser information is invented for periods when the extension is absent.
+to collect foreground activity, software changes, and Sysmon rollups for **all apps**, including browser-process DNS/connection summaries.
+When the extension is absent, coarse browser DNS and IP summaries remain available, but they **cannot** reliably prove a page visit. No URLs or page titles are invented.
 
 The core install is completed before optional browser files are copied and
 registered. Failure to install or update an extension or `habbridge.exe` is
