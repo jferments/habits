@@ -1,5 +1,8 @@
 # Habits (Windows collector) — Rust prototype v0.2
 
+NOTE: THIS IS A THROWAWAY PROJECT THAT IS JUST BEING USED AS A ONE OFF SCRIPT FOR PERSONAL USE ... 
+USE AT YOUR OWN RISK <3
+
 Local-only Windows activity collector and one-line date-range ZIP exporter.
 
 **Status: source prototype, not yet Windows-build-verified.** The authoring environment
