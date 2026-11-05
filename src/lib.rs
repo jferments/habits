@@ -1,5 +1,6 @@
 mod agent;
 mod browser_native;
+mod browser_history;
 mod db;
 mod export;
 mod inventory;
@@ -24,15 +25,21 @@ struct Cli {
 enum Commands {
     /// Display heartbeat and collection counters
     Status,
-    /// Show the most recent browser domain visits (never URL paths)
+    /// Show page URLs, titles, visit times from browser history and optional add-ons
     Sites {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
-    /// Show recent timestamped DNS domain observations from non-browser apps
+    /// Show recent timestamped per-app DNS observations (not confirmed visits)
     AppDomains {
         #[arg(long, default_value_t = 50)]
         limit: usize,
+    },
+    /// Scan local Firefox and Edge history databases without an extension
+    HistoryScan {
+        /// Number of days to import on first scan per profile
+        #[arg(long, default_value_t = 30)]
+        days: i64,
     },
     /// Run foreground collector (normally use windowless habagent.exe)
     Run,
@@ -60,6 +67,16 @@ pub fn cli_main() -> Result<()> {
         Commands::Status => db::show_status(&util::database_path()?),
         Commands::Sites { limit } => db::list_browser_visits(&util::database_path()?, limit),
         Commands::AppDomains { limit } => db::list_app_domains(&util::database_path()?, limit),
+        Commands::HistoryScan { days } => {
+            anyhow::ensure!((1..=3650).contains(&days), "--days must be between 1 and 3650");
+            let mut conn=db::open(&util::database_path()?)?;
+            browser_history::poll(&mut conn, days)?;
+            for browser in ["firefox","edge"] {
+                println!("{browser}: {}", db::get_meta(&conn,&format!("browser_history_{browser}_status"))?
+                    .unwrap_or_else(||"not scanned".into()));
+            }
+            Ok(())
+        },
         Commands::Run => run_agent(),
         Commands::Inventory => {
             #[cfg(windows)]
