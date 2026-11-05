@@ -49,6 +49,35 @@ pub fn init(conn: &Connection) -> Result<()> {
             tab_id INTEGER,
             window_id INTEGER
         );
+        -- Non-browser Sysmon metadata is coalesced instead of stored per packet/
+        -- connection. DNS timestamps do NOT establish a network connection.
+        CREATE TABLE IF NOT EXISTS app_domain_minutes (
+            app TEXT NOT NULL,
+            host TEXT NOT NULL,
+            minute_utc TEXT NOT NULL,
+            first_utc TEXT NOT NULL,
+            last_utc TEXT NOT NULL,
+            query_count INTEGER NOT NULL,
+            PRIMARY KEY(app,host,minute_utc)
+        );
+        CREATE INDEX IF NOT EXISTS ix_app_domain_minutes_time ON app_domain_minutes(minute_utc);
+        CREATE TABLE IF NOT EXISTS app_connection_hours (
+            app TEXT NOT NULL,
+            destination_ip TEXT NOT NULL,
+            destination_port INTEGER NOT NULL,
+            protocol TEXT NOT NULL,
+            hour_utc TEXT NOT NULL,
+            first_utc TEXT NOT NULL,
+            last_utc TEXT NOT NULL,
+            connection_count INTEGER NOT NULL,
+            PRIMARY KEY(app,destination_ip,destination_port,protocol,hour_utc)
+        );
+        CREATE INDEX IF NOT EXISTS ix_app_connection_hours_time ON app_connection_hours(hour_utc);
+        CREATE TABLE IF NOT EXISTS sysmon_rollup_seen (
+            log_epoch INTEGER NOT NULL,
+            record_id INTEGER NOT NULL,
+            PRIMARY KEY(log_epoch,record_id)
+        );
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY, value TEXT NOT NULL
         );
@@ -207,6 +236,10 @@ pub fn show_status(path: &Path) -> Result<()> {
     let browser_intervals: i64 = conn.query_row("SELECT count(*) FROM browser_attention_intervals", [], |r|r.get(0))?;
     println!("Browser visits        {browser_visits}");
     println!("Browser attention     {browser_intervals}");
+    let app_domains: i64 = conn.query_row("SELECT count(*) FROM app_domain_minutes", [], |r|r.get(0))?;
+    let app_connections: i64 = conn.query_row("SELECT count(*) FROM app_connection_hours", [], |r|r.get(0))?;
+    println!("App DNS minutes       {app_domains}");
+    println!("App connection hours  {app_connections}");
     println!("Sysmon status: {}", get_meta(&conn, "sysmon_status")?.as_deref().unwrap_or("unknown"));
     println!("Sysmon checkpoint: {}", get_meta(&conn, "sysmon_last_record_id")?.as_deref().unwrap_or("uninitialized"));
     Ok(())
