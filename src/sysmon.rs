@@ -86,6 +86,20 @@ fn field<'a>(event: &'a SysmonEvent, field: &str) -> Option<&'a str> {
     event.data.get(field).map(String::as_str)
 }
 
+fn executable_name(event: &SysmonEvent) -> String {
+    let path = field(event, "Image").unwrap_or("unknown");
+    path.rsplit(['\\', '/']).next().unwrap_or("unknown").to_ascii_lowercase()
+}
+fn tracked_browser(app: &str) -> bool {
+    matches!(app, "firefox.exe" | "msedge.exe")
+}
+fn dns_host(value: &str) -> Option<String> {
+    let host=value.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || host.len() > 253 || host.contains('/') || host.contains('@')
+        || host.contains(' ') { return None; }
+    Some(host)
+}
+
 pub fn insert_events(conn: &mut Connection, events: &[SysmonEvent]) -> Result<()> {
     if events.is_empty() { return Ok(()); }
     let log_epoch: i64 = crate::db::get_meta(conn, "sysmon_epoch")?
@@ -104,25 +118,50 @@ pub fn insert_events(conn: &mut Connection, events: &[SysmonEvent]) -> Result<()
                         field(ev,"Image"), field(ev,"ParentProcessGuid")])?;
             }
             3 => {
-                tx.execute(r#"INSERT OR IGNORE INTO network_events
-                    (log_epoch,record_id,timestamp_utc,process_guid,pid,image,protocol,
-                     source_ip,source_port,destination_ip,destination_port,initiated)
-                    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"#,
-                    params![log_epoch, ev.record_id, ev.timestamp_utc, field(ev,"ProcessGuid"),
-                        as_i64(ev,"ProcessId"), field(ev,"Image"), field(ev,"Protocol"),
-                        field(ev,"SourceIp"), as_i64(ev,"SourcePort"),
-                        field(ev,"DestinationIp"), as_i64(ev,"DestinationPort"),
-                        field(ev,"Initiated").map(|v| i64::from(v.eq_ignore_ascii_case("true")))])?;
+                let app=executable_name(ev);
+                // Browser browsing history is captured by the extension;
+                // 3rd-party ad/telemetry subresource connections are noise.
+                if tracked_browser(&app) { continue; }
+                let inserted=tx.execute(
+                    "INSERT OR IGNORE INTO sysmon_rollup_seen(log_epoch,record_id) VALUES(?1,?2)",
+                    params![log_epoch, ev.record_id],
+                )?;
+                if inserted == 0 { continue; }
+                let ip=field(ev,"DestinationIp").unwrap_or("unknown");
+                let port=as_i64(ev,"DestinationPort").unwrap_or(0);
+                let protocol=field(ev,"Protocol").unwrap_or("unknown").to_ascii_lowercase();
+                let hour=format!("{}:00:00.000Z",&ev.timestamp_utc[..13]);
+                tx.execute(
+                    r#"INSERT INTO app_connection_hours
+                       (app,destination_ip,destination_port,protocol,hour_utc,first_utc,last_utc,connection_count)
+                       VALUES(?1,?2,?3,?4,?5,?6,?6,1)
+                       ON CONFLICT(app,destination_ip,destination_port,protocol,hour_utc)
+                       DO UPDATE SET first_utc=MIN(first_utc,excluded.first_utc),
+                                     last_utc=MAX(last_utc,excluded.last_utc),
+                                     connection_count=connection_count+1"#,
+                    params![app,ip,port,protocol,hour,ev.timestamp_utc],
+                )?;
             }
             22 => {
-                if let Some(name) = field(ev,"QueryName") {
-                    tx.execute(r#"INSERT OR IGNORE INTO dns_events
-                        (log_epoch,record_id,timestamp_utc,process_guid,pid,image,query_name,query_status,query_results)
-                        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)"#,
-                        params![log_epoch, ev.record_id, ev.timestamp_utc, field(ev,"ProcessGuid"),
-                            as_i64(ev,"ProcessId"), field(ev,"Image"), name,
-                            field(ev,"QueryStatus"), field(ev,"QueryResults")])?;
-                }
+                let app=executable_name(ev);
+                if tracked_browser(&app) { continue; }
+                let Some(host)=field(ev,"QueryName").and_then(dns_host) else { continue };
+                let inserted=tx.execute(
+                    "INSERT OR IGNORE INTO sysmon_rollup_seen(log_epoch,record_id) VALUES(?1,?2)",
+                    params![log_epoch, ev.record_id],
+                )?;
+                if inserted == 0 { continue; }
+                let minute=format!("{}:00.000Z",&ev.timestamp_utc[..16]);
+                tx.execute(
+                    r#"INSERT INTO app_domain_minutes
+                       (app,host,minute_utc,first_utc,last_utc,query_count)
+                       VALUES(?1,?2,?3,?4,?4,1)
+                       ON CONFLICT(app,host,minute_utc)
+                       DO UPDATE SET first_utc=MIN(first_utc,excluded.first_utc),
+                                     last_utc=MAX(last_utc,excluded.last_utc),
+                                     query_count=query_count+1"#,
+                    params![app,host,minute,ev.timestamp_utc],
+                )?;
             }
             _ => {}
         }
@@ -275,14 +314,14 @@ mod tests {
             data: HashMap::from([("QueryName".into(), "example.com".into())]) };
         insert_events(&mut conn, &[e.clone()]).unwrap();
         insert_events(&mut conn, &[e]).unwrap();
-        let count:i64 = conn.query_row("SELECT COUNT(*) FROM dns_events",[],|r|r.get(0)).unwrap();
+        let count:i64 = conn.query_row("SELECT COUNT(*) FROM app_domain_minutes",[],|r|r.get(0)).unwrap();
         assert_eq!(count,1);
         crate::db::set_meta(&conn, "sysmon_epoch", "1").unwrap();
         let repeated = SysmonEvent { record_id: 2, event_id: 22,
             timestamp_utc:"2026-11-05T19:05:01.123Z".into(),
             data: HashMap::from([("QueryName".into(), "new.example.com".into())]) };
         insert_events(&mut conn, &[repeated]).unwrap();
-        let count:i64 = conn.query_row("SELECT COUNT(*) FROM dns_events",[],|r|r.get(0)).unwrap();
+        let count:i64 = conn.query_row("SELECT COUNT(*) FROM app_domain_minutes",[],|r|r.get(0)).unwrap();
         assert_eq!(count,2, "record IDs from distinct log generations must be preserved");
     }
 }
