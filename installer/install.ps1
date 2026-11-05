@@ -13,6 +13,9 @@ $SourceAgent = Join-Path $Release 'habagent.exe'
 if (!(Test-Path $SourceCli) -or !(Test-Path $SourceAgent)) {
     throw 'Build first: cargo build --release'
 }
+# Intentionally install as an unlisted, per-user background tool: no MSI/MSIX,
+# no Add/Remove Programs (Uninstall registry) entry, and no Start-menu shortcut.
+# Auto-start is registered only via the visible HabitsCollector scheduled task.
 $Install = Join-Path $env:LOCALAPPDATA 'Habits\bin'
 New-Item -ItemType Directory -Force -Path $Install | Out-Null
 # A running agent can lock the executable during an upgrade.
@@ -47,6 +50,7 @@ if ($ConfigureSysmon) {
 }
 Write-Host "Installed CLI and agent into $Install"
 Write-Host 'Task: HabitsCollector (runs quietly at the next interactive logon)'
+Write-Host 'No Installed Apps / Add or Remove Programs entry is registered.'
 Write-Host 'Run now: Start-ScheduledTask -TaskName HabitsCollector'
 Write-Host 'Open a new terminal, then: habits status'
 if (!$ConfigureSysmon) {
