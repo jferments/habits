@@ -73,11 +73,6 @@ pub fn init(conn: &Connection) -> Result<()> {
             PRIMARY KEY(app,destination_ip,destination_port,protocol,hour_utc)
         );
         CREATE INDEX IF NOT EXISTS ix_app_connection_hours_time ON app_connection_hours(hour_utc);
-        CREATE TABLE IF NOT EXISTS sysmon_rollup_seen (
-            log_epoch INTEGER NOT NULL,
-            record_id INTEGER NOT NULL,
-            PRIMARY KEY(log_epoch,record_id)
-        );
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY, value TEXT NOT NULL
         );
@@ -223,8 +218,8 @@ pub fn show_status(path: &Path) -> Result<()> {
     }
     for (name, table) in [
         ("Process events", "process_events"),
-        ("DNS queries", "dns_events"),
-        ("Connections", "network_events"),
+        ("Legacy DNS events", "dns_events"),
+        ("Legacy connections", "network_events"),
         ("Activity intervals", "activity_intervals"),
         ("Software changes", "software_changes"),
         ("Collector errors", "collector_errors"),
