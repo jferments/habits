@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Habits Domain Journal",
+  "version": "0.1.0",
+  "description": "Logs visited hostnames and active-tab time to your local Habits SQLite collector.",
+  "permissions": [
+    "tabs",
+    "webNavigation",
+    "idle",
+    "alarms",
+    "storage",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "service_worker": "background.js"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "habits-domain-journal@jferments.local",
+      "strict_min_version": "128.0"
+    }
+  },
+  "action": {
+    "default_title": "Habits Domain Journal"
+  }
+}
