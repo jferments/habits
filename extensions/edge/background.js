@@ -136,7 +136,12 @@ function recordVisit(details) {
 
     chrome.tabs.get(details.tabId,tab => {
         if (chrome.runtime.lastError || !tab || tab.incognito) return;
-        enqueue('visit',host,tab,{url:pageUrl});
+        // A tab title may already be available at commit time. Only trust it
+        // when the tab URL actually matches this navigation (not the prior page).
+        const title = safePageUrl(tab.url) === pageUrl && typeof tab.title === 'string'
+            ? tab.title.replace(/[\\u0000-\\u001f\\u007f]/g, '').slice(0,2048)
+            : undefined;
+        enqueue('visit',host,tab,{url:pageUrl,title});
         if (tab.active) syncAttention();
     });
 }
