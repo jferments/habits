@@ -26,6 +26,7 @@ quick-xml = "0.38"
 rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+url = "2"
 sha2 = "0.10"
 tempfile = "3.13"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
