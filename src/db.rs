@@ -51,7 +51,7 @@ pub fn init(conn: &Connection) -> Result<()> {
             tab_id INTEGER,
             window_id INTEGER
         );
-        -- Non-browser Sysmon metadata is coalesced instead of stored per packet/
+        -- All app Sysmon metadata (including browsers) is coalesced instead of per packet/
         -- connection. DNS timestamps do NOT establish a network connection.
         CREATE TABLE IF NOT EXISTS app_domain_minutes (
             app TEXT NOT NULL,
@@ -281,7 +281,7 @@ pub fn list_browser_visits(path: &Path, limit: usize) -> Result<()> {
 pub fn list_app_domains(path: &Path, limit: usize) -> Result<()> {
     if !path.exists() { println!("No Habits database yet."); return Ok(()); }
     let conn=Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    println!("Non-browser DNS observations (not confirmed network connections):");
+    println!("App DNS observations (includes browsers; not confirmed page visits or connections):");
     let mut stmt=conn.prepare(
         "SELECT last_utc,app,host,query_count FROM app_domain_minutes
          ORDER BY last_utc DESC LIMIT ?1"
