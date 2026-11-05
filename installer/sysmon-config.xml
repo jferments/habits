@@ -1,0 +1,11 @@
+<Sysmon schemaversion="4.90">
+  <!-- Habits v0.1: metadata event types only. Sysmon may retain more fields
+       in its Event Log than the Habits SQLite collector saves (notably command
+       lines in process-create events). Review before enabling on your device. -->
+  <EventFiltering>
+    <ProcessCreate onmatch="exclude" />
+    <ProcessTerminate onmatch="exclude" />
+    <NetworkConnect onmatch="exclude" />
+    <DnsQuery onmatch="exclude" />
+  </EventFiltering>
+</Sysmon>
