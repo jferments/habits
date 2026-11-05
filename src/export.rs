@@ -137,7 +137,7 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
             "Foreground time and idle time are estimates, not direct measures of attention.",
             "WebExtensions record full top-level URLs and page titles, including potentially sensitive paths and query parameters; no webpage bodies are collected.",
             "Sysmon DNS observations are not proof a network connection occurred.",
-            "Non-browser DNS-minute and connection-hour rollups may straddle export boundaries.",
+            "DNS-minute and connection-hour rollups may straddle export boundaries; browser app rollups are available even without the optional extension.",
             "Legacy raw Sysmon records may exist from earlier collector versions."
         ]
     });
