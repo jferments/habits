@@ -53,7 +53,9 @@ The setup command is safe to rerun after updates. It:
    accepts Microsoft's Sysmon EULA.
 3. Installs/updates the per-user `HabitsCollector` Scheduled Task (no Installed
    Apps entry, shortcut, tray icon, or custom always-on Windows service).
-4. Starts the collector immediately and displays diagnostic `habits status`.
+4. Starts the collector immediately and verifies the task is running and
+   SQLite heartbeat is fresh. If not, it runs the read-only diagnostic script
+   and **fails setup** rather than falsely claiming success.
 
 Sysmon Event IDs **1, 3, 5, and 22** are enabled for **new** installations
 using `installer/sysmon-config.xml`. These supply process, connection, and
@@ -87,6 +89,46 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -SkipTests
 
 `-SkipSysmon` is for intentional partial setup only: DNS/network/process
 collection will not work without Sysmon.
+
+## Diagnosing a collector that is Queued or has no database
+
+A successful Rust build or an error-free `Start-ScheduledTask` invocation does
+**not** prove that the collector is running. The database at
+`%LOCALAPPDATA%\Habits\activity.sqlite` is created **before** Sysmon ingestion,
+so `habits status` showing "No database yet" means the agent has not reached
+its SQLite initialization. A queued task is one possible cause.
+
+The installer now permits starting on battery power and uses the Windows logon
+identity plus an explicit working directory. Setup checks both the task state
+and a **recent collector heartbeat**, and exits nonzero if either is missing.
+
+To run a read-only diagnostic from the repository directory:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\doctor.ps1
+```
+
+This prints the task state, last-run code, executable path, power restrictions,
+the `habagent.exe` process, any fatal error log, and the exact Sysmon-channel
+access error. It does not modify the Event Log ACL or other security settings.
+
+If no agent process is running, you can test it in the foreground to see startup
+errors immediately:
+
+```powershell
+.\target\release\habits.exe run
+```
+
+Leave it running briefly, check `habits status` in another terminal, then press
+Ctrl+C. Stop an already-running Habits task before a foreground test to avoid
+the exclusive collector lock.
+
+**Sysmon warnings are separate from task startup.** A non-elevated
+`Get-WinEvent -ListLog` failure may mean access denied, missing channel, or
+another error. First inspect the exact diagnostic and confirm Sysmon's service.
+Do not broaden the whole Event Log Readers group or replace existing channel
+security descriptors automatically. Sysmon's upstream log may contain
+sensitive command-line metadata.
 
 ## Requirements
 
