@@ -1,4 +1,5 @@
-//! Windows WebExtension native messaging host. Only receives sanitized domain events.
+//! Windows WebExtension native messaging host. Records navigation metadata only.
+//! Runs as a separate on-demand process; the main collector never connects to it.
 use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -18,6 +19,10 @@ struct BrowserMessage {
     kind: String,
     #[serde(default)]
     host: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
     timestamp_ms: i64,
     #[serde(default)]
     tab_id: Option<i64>,
@@ -48,7 +53,19 @@ fn validated_host(value: &str) -> Result<String> {
     Ok(normalized)
 }
 
-fn validate(event: &BrowserMessage) -> Result<Option<String>> {
+fn canonical_url(value: &str, expected_host: &str) -> Result<String> {
+    anyhow::ensure!(!value.is_empty() && value.len() <= 16_384, "URL is too long");
+    let mut parsed = url::Url::parse(value).context("invalid browser URL")?;
+    anyhow::ensure!(matches!(parsed.scheme(), "http" | "https"), "unsupported URL scheme");
+    let host = parsed.host_str().context("URL has no host")?;
+    anyhow::ensure!(validated_host(host)? == expected_host, "URL and hostname mismatch");
+    // Credentials embedded in a URL are not browsing metadata we want to retain.
+    if !parsed.username().is_empty() { parsed.set_username("").map_err(|_| anyhow::anyhow!("invalid URL username"))?; }
+    if parsed.password().is_some() { parsed.set_password(None).map_err(|_| anyhow::anyhow!("invalid URL password"))?; }
+    Ok(parsed.to_string())
+}
+
+fn validate(event: &BrowserMessage) -> Result<(Option<String>, Option<String>, Option<String>)> {
     anyhow::ensure!(
         !event.id.is_empty() && event.id.len() <= 96
             && event.id.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_:".contains(&b)),
@@ -56,7 +73,7 @@ fn validate(event: &BrowserMessage) -> Result<Option<String>> {
     );
     anyhow::ensure!(matches!(event.browser.as_str(), "firefox" | "edge"), "invalid browser");
     anyhow::ensure!(
-        matches!(event.kind.as_str(), "visit" | "focus" | "heartbeat" | "blur"),
+        matches!(event.kind.as_str(), "visit" | "title" | "focus" | "heartbeat" | "blur"),
         "invalid event type"
     );
     let now = Utc::now().timestamp_millis();
@@ -66,7 +83,16 @@ fn validate(event: &BrowserMessage) -> Result<Option<String>> {
     if event.kind != "blur" {
         anyhow::ensure!(host.is_some(), "event requires host");
     }
-    Ok(host)
+    let normalized_url = match (&event.url, &host) {
+        (Some(value), Some(h)) => Some(canonical_url(value, h)?),
+        (None, _) => None,
+        _ => anyhow::bail!("URL provided without hostname"),
+    };
+    if event.kind == "title" { anyhow::ensure!(normalized_url.is_some(), "title event requires URL"); }
+    let title = event.title.as_deref().map(|s| {
+        s.chars().filter(|c| !c.is_control()).take(2048).collect::<String>()
+    });
+    Ok((host, normalized_url, title))
 }
 
 fn utc(ms: i64) -> Result<String> {
@@ -76,7 +102,7 @@ fn utc(ms: i64) -> Result<String> {
 }
 
 fn apply(conn: &mut Connection, event: &BrowserMessage) -> Result<()> {
-    let host = validate(event)?;
+    let (host, url, title) = validate(event)?;
     let tx = conn.transaction()?;
     let inserted = tx.execute(
         "INSERT OR IGNORE INTO browser_seen_events(event_id,created_ms) VALUES(?1,?2)",
@@ -88,10 +114,22 @@ fn apply(conn: &mut Connection, event: &BrowserMessage) -> Result<()> {
     }
     if event.kind == "visit" {
         tx.execute(
-            "INSERT INTO browser_visits(event_id,browser,host,visited_utc,tab_id,window_id)
-             VALUES(?1,?2,?3,?4,?5,?6)",
-            params![event.id, event.browser, host, utc(event.timestamp_ms)?,
+            "INSERT INTO browser_visits(event_id,browser,host,url,title,visited_utc,tab_id,window_id)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![event.id, event.browser, host, url, title, utc(event.timestamp_ms)?,
                 event.tab_id, event.window_id],
+        )?;
+    } else if event.kind == "title" {
+        // Page titles often arrive AFTER the navigation commit. Only update a
+        // recent visit for this exact browser, tab and URL; never invent one.
+        tx.execute(
+            "UPDATE browser_visits SET title=?1 WHERE event_id=(
+                 SELECT event_id FROM browser_visits
+                 WHERE browser=?2 AND tab_id=?3 AND url=?4 AND visited_utc>=?5
+                 ORDER BY visited_utc DESC LIMIT 1
+             )",
+            params![title, event.browser, event.tab_id, url,
+                utc(event.timestamp_ms.saturating_sub(10 * 60_000))?],
         )?;
     } else {
         let previous: Option<(String, i64, i64)> = tx.query_row(
@@ -192,11 +230,12 @@ mod tests {
 
     fn event(id: &str, kind: &str, host: Option<&str>, time: i64) -> BrowserMessage {
         BrowserMessage { id:id.into(), browser:"firefox".into(), kind:kind.into(),
-            host:host.map(str::to_string), timestamp_ms: time, tab_id:Some(3),window_id:Some(1) }
+            host:host.map(str::to_string), url:None, title:None,
+            timestamp_ms: time, tab_id:Some(3),window_id:Some(1) }
     }
 
     #[test]
-    fn visits_deduplicate_and_contain_only_host() {
+    fn visits_deduplicate_and_validate_hosts() {
         let mut db = Connection::open_in_memory().unwrap();
         crate::db::init(&db).unwrap();
         let t = Utc::now().timestamp_millis();
@@ -209,6 +248,44 @@ mod tests {
         assert_eq!(count,1);
         assert_eq!(host,"example.com");
         assert!(apply(&mut db,&event("bad","visit",Some("example.com/path"),t)).is_err());
+    }
+
+    #[test]
+    fn visit_saves_url_and_title_without_embedded_password() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::db::init(&db).unwrap();
+        let t = Utc::now().timestamp_millis();
+        let mut visit=event("v100","visit",Some("example.com"),t);
+        visit.url=Some("https://bob:password@example.com/search?q=rust#results".into());
+        apply(&mut db,&visit).unwrap();
+        let saved: (String, Option<String>)=db.query_row(
+            "SELECT url,title FROM browser_visits WHERE event_id='v100'",[],|r|Ok((r.get(0)?,r.get(1)?))
+        ).unwrap();
+        assert_eq!(saved.0,"https://example.com/search?q=rust#results");
+        assert_eq!(saved.1,None);
+
+        let mut title_event=event("title100","title",Some("example.com"),t+2_000);
+        title_event.url=Some("https://example.com/search?q=rust#results".into());
+        title_event.title=Some("Search results — Rust 🦀".into());
+        apply(&mut db,&title_event).unwrap();
+        let title:String=db.query_row("SELECT title FROM browser_visits WHERE event_id='v100'",[],|r|r.get(0)).unwrap();
+        assert_eq!(title,"Search results — Rust 🦀");
+        apply(&mut db,&title_event).unwrap();
+        assert!(apply(&mut db,&BrowserMessage{
+            url:Some("https://other.com/".into()), id:"invalidhost".into(), ..title_event
+        }).is_err());
+    }
+
+    #[test]
+    fn title_updates_do_not_create_ghost_visits() {
+        let mut db=Connection::open_in_memory().unwrap();
+        crate::db::init(&db).unwrap();
+        let mut e=event("orphan-title","title",Some("example.org"),Utc::now().timestamp_millis());
+        e.url=Some("https://example.org/page".into());
+        e.title=Some("Orphan page".into());
+        apply(&mut db,&e).unwrap();
+        let n:i64=db.query_row("SELECT count(*) FROM browser_visits",[],|r|r.get(0)).unwrap();
+        assert_eq!(n,0);
     }
 
     #[test]
