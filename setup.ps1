@@ -92,16 +92,23 @@ try {
             Write-Warning 'Sysmon event ingestion is reporting an error. Foreground tracking should still work.'
         }
 
+        $SysmonChannelReady = $SkipSysmon
         if (-not $SkipSysmon) {
             try {
                 $null = Get-WinEvent -ListLog 'Microsoft-Windows-Sysmon/Operational' -ErrorAction Stop
+                $SysmonChannelReady = $true
             } catch {
                 Write-Warning ("Unable to inspect Sysmon Operational channel: " + $_.Exception.Message)
-                Write-Warning 'This is a separate Sysmon access/availability issue; the collector itself is now running.'
+                Write-Warning 'Sysmon ingestion is not confirmed. See README: Sysmon event-channel permissions.'
             }
         }
         Write-Host ''
-        Write-Host 'Setup complete. Habits starts quietly at each user logon.'
+        if (-not $SkipSysmon -and -not $SysmonChannelReady) {
+            Write-Warning 'Partial setup: Habits is running, but Sysmon DNS/process/connection collection is BLOCKED.'
+            Write-Host 'Use installer\\doctor.ps1 to inspect the channel error. See the README for least-privilege options.'
+        } else {
+            Write-Host 'Setup complete. Habits starts quietly at each user logon.'
+        }
         Write-Host 'No Add/Remove Programs entry or tray icon is created.'
         Write-Host 'Open a NEW terminal to use: habits status'
         Write-Host 'To export later: habits export --from YYYY-MM-DD --to YYYY-MM-DD'
