@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "habagent"
 path = "src/bin/habagent.rs"
 
+[[bin]]
+name = "habbridge"
+path = "src/bin/habbridge.rs"
+
 [dependencies]
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
