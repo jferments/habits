@@ -90,9 +90,6 @@ fn executable_name(event: &SysmonEvent) -> String {
     let path = field(event, "Image").unwrap_or("unknown");
     path.rsplit(['\\', '/']).next().unwrap_or("unknown").to_ascii_lowercase()
 }
-fn tracked_browser(app: &str) -> bool {
-    matches!(app, "firefox.exe" | "msedge.exe")
-}
 fn dns_host(value: &str) -> Option<String> {
     let host=value.trim().trim_end_matches('.').to_ascii_lowercase();
     if host.is_empty() || host.len() > 253 || host.contains('/') || host.contains('@')
@@ -126,9 +123,8 @@ pub fn insert_events(conn: &mut Connection, events: &[SysmonEvent]) -> Result<()
             }
             3 => {
                 let app=executable_name(ev);
-                // Browser browsing history is captured by the extension;
-                // 3rd-party ad/telemetry subresource connections are noise.
-                if tracked_browser(&app) { continue; }
+                // Always retain low-noise rollups, including browser processes.
+                // Browser extensions are OPTIONAL and add richer navigation data.
                 let ip=field(ev,"DestinationIp").unwrap_or("unknown");
                 let port=as_i64(ev,"DestinationPort").unwrap_or(0);
                 let protocol=field(ev,"Protocol").unwrap_or("unknown").to_ascii_lowercase();
@@ -146,7 +142,6 @@ pub fn insert_events(conn: &mut Connection, events: &[SysmonEvent]) -> Result<()
             }
             22 => {
                 let app=executable_name(ev);
-                if tracked_browser(&app) { continue; }
                 let Some(host)=field(ev,"QueryName").and_then(dns_host) else { continue };
                 let minute=format!("{}:00.000Z",&ev.timestamp_utc[..16]);
                 tx.execute(
@@ -303,7 +298,7 @@ mod tests {
         assert_eq!(event.timestamp_utc,"2026-11-04T19:05:01.123Z");
     }
     #[test]
-    fn rolls_up_non_browser_connections_and_ignores_browser_subresources() {
+    fn rolls_up_network_traffic_even_without_browser_addon() {
         let mut db=Connection::open_in_memory().unwrap();
         crate::db::init(&db).unwrap();
         let event=|record_id,event_id,image:&str| SysmonEvent {
@@ -329,12 +324,12 @@ mod tests {
             "SELECT count(*),sum(connection_count) FROM app_connection_hours",[],
             |r|Ok((r.get(0)?,r.get(1)?)),
         ).unwrap();
-        assert_eq!((buckets,connections),(1,2));
+        assert_eq!((buckets,connections),(2,3));
         let (dns_buckets,queries):(i64,i64)=db.query_row(
             "SELECT count(*),sum(query_count) FROM app_domain_minutes",[],
             |r|Ok((r.get(0)?,r.get(1)?)),
         ).unwrap();
-        assert_eq!((dns_buckets,queries),(1,1));
+        assert_eq!((dns_buckets,queries),(2,2));
         let raw:i64=db.query_row("SELECT count(*) FROM network_events",[],|r|r.get(0)).unwrap();
         assert_eq!(raw,0,"new collector should not append raw connection noise");
     }
