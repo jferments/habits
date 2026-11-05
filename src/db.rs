@@ -298,3 +298,30 @@ pub fn list_app_domains(path: &Path, limit: usize) -> Result<()> {
     }
     Ok(())
 }
+
+
+#[cfg(test)]
+mod browser_schema_tests {
+    use super::*;
+    #[test]
+    fn upgrades_existing_browser_visits_without_deleting_history() {
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE browser_visits (
+               event_id TEXT PRIMARY KEY,browser TEXT NOT NULL,host TEXT NOT NULL,
+               visited_utc TEXT NOT NULL,tab_id INTEGER,window_id INTEGER
+             );
+             INSERT INTO browser_visits(event_id,browser,host,visited_utc)
+             VALUES('oldvisit','firefox','example.com','2026-11-01T12:00:00.000Z');"
+        ).unwrap();
+        init(&conn).unwrap();
+        init(&conn).unwrap();
+        let (host,url,title):(String,Option<String>,Option<String>)=conn.query_row(
+            "SELECT host,url,title FROM browser_visits WHERE event_id='oldvisit'",[],
+            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).unwrap();
+        assert_eq!(host,"example.com");
+        assert_eq!(url,None);
+        assert_eq!(title,None);
+    }
+}
