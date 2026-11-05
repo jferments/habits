@@ -16,6 +16,39 @@ pub fn open(path: &Path) -> Result<Connection> {
 
 pub fn init(conn: &Connection) -> Result<()> {
     conn.execute_batch(r#"
+        CREATE TABLE IF NOT EXISTS browser_seen_events (
+            event_id TEXT PRIMARY KEY,
+            created_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS browser_visits (
+            event_id TEXT PRIMARY KEY,
+            browser TEXT NOT NULL,
+            host TEXT NOT NULL,
+            visited_utc TEXT NOT NULL,
+            tab_id INTEGER,
+            window_id INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS ix_browser_visits_time ON browser_visits(visited_utc);
+        CREATE INDEX IF NOT EXISTS ix_browser_visits_host_time ON browser_visits(host,visited_utc);
+        CREATE TABLE IF NOT EXISTS browser_attention_intervals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            browser TEXT NOT NULL,
+            host TEXT NOT NULL,
+            tab_id INTEGER,
+            window_id INTEGER,
+            started_ms INTEGER NOT NULL,
+            ended_ms INTEGER NOT NULL,
+            CHECK (ended_ms >= started_ms)
+        );
+        CREATE INDEX IF NOT EXISTS ix_browser_attention_time ON browser_attention_intervals(started_ms);
+        CREATE TABLE IF NOT EXISTS browser_focus_state (
+            browser TEXT PRIMARY KEY,
+            host TEXT NOT NULL,
+            interval_id INTEGER NOT NULL REFERENCES browser_attention_intervals(id),
+            last_ms INTEGER NOT NULL,
+            tab_id INTEGER,
+            window_id INTEGER
+        );
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY, value TEXT NOT NULL
         );
@@ -170,6 +203,10 @@ pub fn show_status(path: &Path) -> Result<()> {
         let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
         println!("{name:20} {count}");
     }
+    let browser_visits: i64 = conn.query_row("SELECT count(*) FROM browser_visits", [], |r|r.get(0))?;
+    let browser_intervals: i64 = conn.query_row("SELECT count(*) FROM browser_attention_intervals", [], |r|r.get(0))?;
+    println!("Browser visits        {browser_visits}");
+    println!("Browser attention     {browser_intervals}");
     println!("Sysmon status: {}", get_meta(&conn, "sysmon_status")?.as_deref().unwrap_or("unknown"));
     println!("Sysmon checkpoint: {}", get_meta(&conn, "sysmon_last_record_id")?.as_deref().unwrap_or("uninitialized"));
     Ok(())
