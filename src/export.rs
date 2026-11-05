@@ -12,6 +12,8 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
     anyhow::ensure!(input.is_file(), "database not found: {}", input.display());
     anyhow::ensure!(!output.exists(), "output already exists: {}", output.display());
     let (start_utc, end_exclusive_utc) = crate::util::utc_boundaries(from, to)?;
+    let start_ms=chrono::DateTime::parse_from_rfc3339(&start_utc)?.timestamp_millis();
+    let end_ms=chrono::DateTime::parse_from_rfc3339(&end_exclusive_utc)?.timestamp_millis();
     let dir = output.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(dir)?;
     let scratch = tempfile::tempdir()?;
@@ -29,6 +31,25 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
     src.execute_batch("BEGIN DEFERRED TRANSACTION;")?;
     let _: i64 = src.query_row("SELECT COUNT(*) FROM main.sqlite_master", [], |r| r.get(0))?;
     let copied: Result<()> = (|| {
+        // The browser visit ledger is exact; attention intervals are clipped.
+        src.execute(r#"INSERT INTO report.browser_visits
+            SELECT * FROM main.browser_visits WHERE visited_utc >= ?1 AND visited_utc < ?2"#,
+            params![start_utc, end_exclusive_utc])?;
+        src.execute(r#"INSERT INTO report.browser_attention_intervals
+            (id,browser,host,tab_id,window_id,started_ms,ended_ms)
+            SELECT id,browser,host,tab_id,window_id,
+              MAX(started_ms,?1),MIN(ended_ms,?2)
+            FROM main.browser_attention_intervals
+            WHERE started_ms < ?2 AND ended_ms > ?1"#,
+            params![start_ms,end_ms])?;
+        // Aggregate Sysmon buckets may straddle the requested date boundary;
+        // export includes overlapping buckets and preserves first/last samples.
+        src.execute(r#"INSERT INTO report.app_domain_minutes
+            SELECT * FROM main.app_domain_minutes WHERE last_utc >= ?1 AND first_utc < ?2"#,
+            params![start_utc,end_exclusive_utc])?;
+        src.execute(r#"INSERT INTO report.app_connection_hours
+            SELECT * FROM main.app_connection_hours WHERE last_utc >= ?1 AND first_utc < ?2"#,
+            params![start_utc,end_exclusive_utc])?;
         src.execute(r#"INSERT INTO report.dns_events
             SELECT * FROM main.dns_events WHERE timestamp_utc >= ?1 AND timestamp_utc < ?2"#,
             params![start_utc, end_exclusive_utc])?;
@@ -86,6 +107,10 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
         Ok(report.query_row(&format!("SELECT COUNT(*) FROM {name}"),[],|r|r.get(0))?)
     };
     let counts = json!({
+        "browser_visits": count("browser_visits")?,
+        "browser_attention_intervals": count("browser_attention_intervals")?,
+        "app_domain_minutes": count("app_domain_minutes")?,
+        "app_connection_hours": count("app_connection_hours")?,
         "process_events": count("process_events")?,
         "dns_events": count("dns_events")?,
         "network_events": count("network_events")?,
@@ -110,7 +135,10 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
         "notes": [
             "Software changes include earlier baseline events to reconstruct the inventory.",
             "Foreground time and idle time are estimates, not direct measures of attention.",
-            "Sysmon DNS and network events do not by themselves establish website visits."
+            "WebExtensions record top-level browser host visits, never full URL paths or queries.",
+            "Sysmon DNS observations are not proof a network connection occurred.",
+            "Non-browser DNS-minute and connection-hour rollups may straddle export boundaries.",
+            "Legacy raw Sysmon records may exist from earlier collector versions."
         ]
     });
 
