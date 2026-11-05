@@ -139,7 +139,7 @@ function recordVisit(details) {
         // A tab title may already be available at commit time. Only trust it
         // when the tab URL actually matches this navigation (not the prior page).
         const title = safePageUrl(tab.url) === pageUrl && typeof tab.title === 'string'
-            ? tab.title.replace(/[\\u0000-\\u001f\\u007f]/g, '').slice(0,2048)
+            ? tab.title.replace(/[\u0000-\u001f\u007f]/g, '').slice(0,2048)
             : undefined;
         enqueue('visit',host,tab,{url:pageUrl,title});
         if (tab.active) syncAttention();
@@ -151,7 +151,7 @@ function recordTitle(tab) {
     const pageUrl=safePageUrl(tab.url);
     const host=pageUrl && hostOf(pageUrl);
     if (!host) return;
-    const title=tab.title.replace(/[\\u0000-\\u001f\\u007f]/g, '').slice(0,2048);
+    const title=tab.title.replace(/[\u0000-\u001f\u007f]/g, '').slice(0,2048);
     if (!title) return;
     const key=tab.id + ':' + pageUrl + ':' + title;
     if (state.lastTitles.has(key)) return;
