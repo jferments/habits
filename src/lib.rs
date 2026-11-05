@@ -24,6 +24,16 @@ struct Cli {
 enum Commands {
     /// Display heartbeat and collection counters
     Status,
+    /// Show the most recent browser domain visits (never URL paths)
+    Sites {
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Show recent timestamped DNS domain observations from non-browser apps
+    AppDomains {
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// Run foreground collector (normally use windowless habagent.exe)
     Run,
     /// Take a software inventory snapshot immediately
@@ -48,6 +58,8 @@ pub fn cli_main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Status => db::show_status(&util::database_path()?),
+        Commands::Sites { limit } => db::list_browser_visits(&util::database_path()?, limit),
+        Commands::AppDomains { limit } => db::list_app_domains(&util::database_path()?, limit),
         Commands::Run => run_agent(),
         Commands::Inventory => {
             #[cfg(windows)]
