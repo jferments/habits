@@ -1,4 +1,5 @@
 mod agent;
+mod browser_native;
 mod db;
 mod export;
 mod inventory;
@@ -72,6 +73,10 @@ pub fn cli_main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+pub fn run_browser_bridge() -> Result<()> {
+    browser_native::run()
 }
 
 pub fn run_agent() -> Result<()> {
