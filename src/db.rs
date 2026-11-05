@@ -24,6 +24,8 @@ pub fn init(conn: &Connection) -> Result<()> {
             event_id TEXT PRIMARY KEY,
             browser TEXT NOT NULL,
             host TEXT NOT NULL,
+            url TEXT,
+            title TEXT,
             visited_utc TEXT NOT NULL,
             tab_id INTEGER,
             window_id INTEGER
@@ -165,6 +167,19 @@ pub fn init(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS ix_collector_errors_time ON collector_errors(timestamp_utc);
     "#)?;
+    // Upgrade existing 0.1 databases without deleting historical visits.
+    // Old visits may not have a URL/title; new ones do.
+    for column in ["url", "title"] {
+        let exists = {
+            let mut stmt = conn.prepare("PRAGMA table_info(browser_visits)")?;
+            let columns = stmt.query_map([], |r| r.get::<_,String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            columns.iter().any(|name| name == column)
+        };
+        if !exists {
+            conn.execute(&format!("ALTER TABLE browser_visits ADD COLUMN {column} TEXT"), [])?;
+        }
+    }
     let found: Option<String> = conn.query_row(
         "SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)
     ).optional()?;
@@ -246,16 +261,19 @@ pub fn list_browser_visits(path: &Path, limit: usize) -> Result<()> {
     let conn=Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     println!("Browser visits (local timestamps; hostname only):");
     let mut stmt=conn.prepare(
-        "SELECT visited_utc,browser,host FROM browser_visits ORDER BY visited_utc DESC LIMIT ?1"
+        "SELECT visited_utc,browser,host,url,title FROM browser_visits ORDER BY visited_utc DESC LIMIT ?1"
     )?;
     let rows=stmt.query_map([limit.min(1000) as i64], |r| Ok((
-        r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?
+        r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,
+        r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?
     )))?;
     for row in rows {
-        let (utc,browser,host)=row?;
+        let (utc,browser,host,url,title)=row?;
         let local=chrono::DateTime::parse_from_rfc3339(&utc)?
             .with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %:z").to_string();
         println!("{local}  {browser:8}  {host}");
+        if let Some(url) = url { println!("    URL: {url}"); }
+        if let Some(title) = title { println!("    Title: {title}"); }
     }
     Ok(())
 }
