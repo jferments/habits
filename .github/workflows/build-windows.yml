@@ -29,7 +29,7 @@ jobs:
       - name: Validate setup scripts and Sysmon config
         shell: pwsh
         run: |
-          foreach ($file in @('setup.ps1', 'installer/setup-sysmon.ps1', 'installer/install.ps1', 'installer/uninstall.ps1')) {
+          foreach ($file in @('setup.ps1', 'installer/setup-sysmon.ps1', 'installer/install.ps1', 'installer/uninstall.ps1', 'installer/doctor.ps1')) {
             $tokens = $null
             $errors = $null
             $null = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors)
@@ -41,3 +41,12 @@ jobs:
           if ($config.Sysmon.EventFiltering.DnsQuery.onmatch -ne 'exclude') { throw 'DNS logging is disabled' }
           if ($config.Sysmon.EventFiltering.NetworkConnect.onmatch -ne 'exclude') { throw 'Connection logging is disabled' }
           if (!(Select-String -Path installer/install.ps1 -Pattern 'habagent.exe' -Quiet)) { throw 'Installer does not target habagent.exe' }
+      - name: Smoke-test battery-independent task settings
+        shell: pwsh
+        run: |
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+            -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable
+          if ($settings.DisallowStartIfOnBatteries) { throw 'Battery must not block startup' }
+          if ($settings.StopIfGoingOnBatteries) { throw 'Battery must not stop collector' }
+          if (-not $settings.StartWhenAvailable) { throw 'Missed logon should allow task startup' }
