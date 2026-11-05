@@ -31,6 +31,10 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
     src.execute_batch("BEGIN DEFERRED TRANSACTION;")?;
     let _: i64 = src.query_row("SELECT COUNT(*) FROM main.sqlite_master", [], |r| r.get(0))?;
     let copied: Result<()> = (|| {
+        // Browser-native history is independent of extensions; preserve provenance.
+        src.execute(r#"INSERT INTO report.browser_history_visits
+            SELECT * FROM main.browser_history_visits WHERE visited_utc >= ?1 AND visited_utc < ?2"#,
+            params![start_utc,end_exclusive_utc])?;
         // The browser visit ledger is exact; attention intervals are clipped.
         src.execute(r#"INSERT INTO report.browser_visits
             SELECT * FROM main.browser_visits WHERE visited_utc >= ?1 AND visited_utc < ?2"#,
@@ -108,6 +112,7 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
     };
     let counts = json!({
         "browser_visits": count("browser_visits")?,
+        "browser_history_visits": count("browser_history_visits")?,
         "browser_attention_intervals": count("browser_attention_intervals")?,
         "app_domain_minutes": count("app_domain_minutes")?,
         "app_connection_hours": count("app_connection_hours")?,
@@ -135,7 +140,9 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
         "notes": [
             "Software changes include earlier baseline events to reconstruct the inventory.",
             "Foreground time and idle time are estimates, not direct measures of attention.",
-            "WebExtensions record full top-level URLs and page titles, including potentially sensitive paths and query parameters; no webpage bodies are collected.",
+            "Both read-only browser history and optional WebExtensions record URLs and titles; no webpage bodies are collected.",
+            "Browser history titles may reflect the URL's latest known title rather than the title at the precise visit time.",
+            "Browser history can be unavailable while Edge locks its SQLite file; that does not affect core collection.",
             "Sysmon DNS observations are not proof a network connection occurred.",
             "DNS-minute and connection-hour rollups may straddle export boundaries; browser app rollups are available even without the optional extension.",
             "Legacy raw Sysmon records may exist from earlier collector versions."
