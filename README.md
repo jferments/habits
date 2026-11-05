@@ -27,8 +27,8 @@ packet sniffer, security tool, or complete web-browsing history recorder.
   `habits.exe` with `run`, `status`, `sites`, `app-domains`, `inventory`, and `export` commands.
 - Firefox and Edge MV3 domain journal add-ons, connected to a small
   `habbridge.exe` native messaging process (no local HTTP server).
-- Timestamped browser top-level hostname visits and bounded active-tab
-  intervals, stored in SQLite without full URLs, queries, or titles.
+- Timestamped browser top-level visits with **full URL, page title, domain**,
+  and bounded active-tab intervals. The extension reads no page contents.
 - Non-browser DNS lookups coalesced by **app/domain/minute** and network
   connection records by **app/destination IP/port/hour** instead of
   saving all raw network events.
@@ -40,7 +40,9 @@ extension.** The `setup.ps1` script installs the Rust bridge and registers
 native messaging, but does not silently install an extension into the browser.
 See [browser installation and verification](extensions/README.md). Browsers
 still require user installation consent; persistent Firefox installation
-requires signing (not yet performed). The add-ons do not capture URL paths.
+requires signing (not yet performed). The add-ons capture URLs and titles
+but never scrape webpage bodies, DOM content, form fields, or screenshots.
+Full URLs can contain sensitive query parameters or tokens; see browser docs.
 
 ## Quick start — one setup command
 
@@ -63,9 +65,10 @@ The setup command is safe to rerun after updates. It:
    accepts Microsoft's Sysmon EULA.
 3. Installs/updates the per-user `HabitsCollector` Scheduled Task (no Installed
    Apps entry, shortcut, tray icon, or custom always-on Windows service).
-4. Registers per-user browser native messaging and copies unpacked add-on
-   source to stable folders. **You still need to load the add-ons in Firefox
-   and Edge** and register Edge's shown extension ID.
+4. Attempts optional per-user browser native messaging registration and
+   copies add-on source to stable folders. Failure here does **not** stop the
+   main collector. **You still need to load the add-ons in Firefox and Edge**
+   and register Edge's shown extension ID.
 5. Starts the collector immediately and verifies the task is running and
    SQLite heartbeat is fresh. If not, it runs the read-only diagnostic script
    and **fails setup** rather than falsely claiming success.
@@ -356,9 +359,10 @@ That script does not delete your data and does not change or uninstall Sysmon.
    before the collector catches up, data is lost. Review Event Viewer log size
    and retention. The collector detects cleared/restarted record IDs but does
    not yet prove completeness under all log-rotation conditions.
-5. **Browser use:** Later add a small opt-in Firefox/Chromium native-messaging
-   extension recording active hostnames/tab intervals only (no page bodies,
-   search strings, cookies, private mode).
+5. **Browser use:** Opt-in Firefox/Edge add-ons now record URL, page title,
+   hostname, and visit times as well as approximate active-tab intervals.
+   Private tabs and webpage content are excluded. Firefox requires extension
+   signing for a persistent installation. The agent works without extensions.
 6. **Stability:** Before using long-term, run on Windows and review CPU/RAM,
    Event Log permissions, sleep/lock behavior, software scan errors, database
    corruption recovery, and task reboot behavior.
@@ -368,7 +372,7 @@ That script does not delete your data and does not change or uninstall Sysmon.
 
 ## Storage overview
 
-- `browser_visits`: **hostname + exact visit timestamp**, Firefox/Edge.
+- `browser_visits`: **full URL, page title, hostname and visit timestamp**, Firefox/Edge.
 - `browser_attention_intervals`: bounded active-tab time by hostname.
 - `app_domain_minutes`: non-browser DNS queries, by executable/host/minute.
 - `app_connection_hours`: non-browser endpoint counts by executable/IP/port/hour.
@@ -384,9 +388,12 @@ before we develop a GUI analyzer.
 
 ## Data safety
 
-The application does **not** capture keystrokes, full URLs or page paths,
-browser titles, content, clipboard, screenshots, HTTP bodies, cookies, or passwords.
-Private/incognito tabs are excluded by design. WebExtensions log visit
-hostnames and approximate active-tab time after the user installs them. No server is opened
+The application does **not** capture keystrokes, browser page bodies, DOM
+text, form fields, clipboard, screenshots, HTTP bodies, cookies or passwords.
+Private/incognito tabs are excluded by design. WebExtensions log full URLs,
+page titles, visit timestamps, and approximate active-tab time **only after
+the user installs them**. Embedded URL usernames/passwords are stripped,
+but URL query strings and fragments can still contain secrets and search
+terms; local SQLite and exported reports must be handled as sensitive data. No server is opened
 and no network packets are modified. The setup changes only a scheduled task
 and, **if explicitly configured by you**, Sysmon settings.
