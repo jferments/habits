@@ -135,7 +135,7 @@ pub fn export_zip(input: &Path, output: &Path, from: NaiveDate, to: NaiveDate) -
         "notes": [
             "Software changes include earlier baseline events to reconstruct the inventory.",
             "Foreground time and idle time are estimates, not direct measures of attention.",
-            "WebExtensions record top-level browser host visits, never full URL paths or queries.",
+            "WebExtensions record full top-level URLs and page titles, including potentially sensitive paths and query parameters; no webpage bodies are collected.",
             "Sysmon DNS observations are not proof a network connection occurred.",
             "Non-browser DNS-minute and connection-hour rollups may straddle export boundaries.",
             "Legacy raw Sysmon records may exist from earlier collector versions."
