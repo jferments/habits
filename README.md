@@ -35,14 +35,70 @@ packet sniffer, security tool, or complete web-browsing history recorder.
 - Date-range ZIP containing filtered SQLite and `manifest.json` with SHA-256.
 - Per-user scheduled task and minimal Sysmon config template.
 
-**Browser domain tracking requires separately loading the Firefox or Edge
-extension.** The `setup.ps1` script installs the Rust bridge and registers
+**Browser history URLs and titles do not require an extension.** The optional
+extension adds immediate navigation events and active-tab time. It is not
+required for the background service. The `setup.ps1` script installs the optional Rust bridge and registers
 native messaging, but does not silently install an extension into the browser.
 See [browser installation and verification](extensions/README.md). Browsers
 still require user installation consent; persistent Firefox installation
 requires signing (not yet performed). The add-ons capture URLs and titles
 but never scrape webpage bodies, DOM content, form fields, or screenshots.
 Full URLs can contain sensitive query parameters or tokens; see browser docs.
+
+## Extension-free browser history (Firefox and Edge)
+
+**The browser add-ons are optional.** `habagent.exe` now attempts a read-only
+import from each local browser profile's history database roughly once a
+minute, whether or not an extension is installed:
+
+- Firefox: `%APPDATA%\Mozilla\Firefox\Profiles\<profile>\places.sqlite`
+- Microsoft Edge: `%LOCALAPPDATA%\Microsoft\Edge\User Data\<Default or Profile N>\History`
+
+Firefox `moz_historyvisits`/`moz_places` and Chromium `visits`/`urls`
+contain the actual URL, the browser's known page title, and visit timestamp.
+This is not packet sniffing, a TLS-intercepting proxy, or a mechanism for
+extracting page bodies. The source databases are **only opened read-only**.
+No browser files are edited or copied unsafely while being written.
+
+Data is stored separately in `browser_history_visits`, with a cursor per
+browser profile. Initial collection backfills **30 days** by default (up to
+2,000 visits per profile per pass), and later polling imports new visits.
+Use `habits history-scan --days 90` for an immediate attempt on newly
+discovered profiles, or `habits history-scan` for the default 30-day window.
+The `--days` flag only controls a profile's **first** scan; it does not
+rewind profiles already scanned. Each browser profile is isolated, so a
+missing/locked database does not stop other profiles or the collector.
+
+**Important limitation:** Edge can deny other applications read access to its
+`History` file while Edge is running. If so, `habits status` reports the
+Edge history source as `limited`, and Habits retries automatically; closing
+Edge may allow a subsequent scan. Firefox is usually accessible read-only in
+WAL mode, but this is not guaranteed on every profile/version. History
+records reflect the browser's configured history retention and do not include
+private/incognito visits or navigations the browser never stored. Titles may
+be the **latest title known for a URL**, not its historical title at that exact
+visit. `habits sites` combines history and optional extension data, preferring
+the extension when both report the same URL at nearly the same timestamp.
+
+The normal Sysmon/app/foreground collectors continue **regardless of history
+import failures**. No extension signing is needed to use the history reader.
+An optional add-on can still supply more immediate navigation events and
+focused-tab durations. Full URLs can include search strings and tokens:
+treat `activity.sqlite` and exported ZIPs as sensitive records.
+
+### Confirm history-only collection
+
+From normal PowerShell after updating/reinstalling:
+
+```powershell
+habits history-scan
+habits status
+habits sites --limit 20
+```
+
+If Firefox works but Edge says `limited`, close Edge, run `habits
+history-scan`, then check `habits sites` again. This never requires
+administrator privileges, disabling browser protections, or weakening TLS.
 
 ## Quick start — one setup command
 
