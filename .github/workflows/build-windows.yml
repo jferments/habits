@@ -26,3 +26,18 @@ jobs:
           if (!(Test-Path target/release/habits.exe)) { throw 'Missing habits.exe' }
           if (!(Test-Path target/release/habagent.exe)) { throw 'Missing habagent.exe' }
           if (Test-Path target/release/habits-agent.exe) { throw 'Legacy agent binary exists' }
+      - name: Validate setup scripts and Sysmon config
+        shell: pwsh
+        run: |
+          foreach ($file in @('setup.ps1', 'installer/setup-sysmon.ps1', 'installer/install.ps1', 'installer/uninstall.ps1')) {
+            $tokens = $null
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -ne 0) {
+              throw "$file PowerShell parse errors: $($errors -join '; ')"
+            }
+          }
+          [xml]$config = Get-Content installer/sysmon-config.xml -Raw
+          if ($config.Sysmon.EventFiltering.DnsQuery.onmatch -ne 'exclude') { throw 'DNS logging is disabled' }
+          if ($config.Sysmon.EventFiltering.NetworkConnect.onmatch -ne 'exclude') { throw 'Connection logging is disabled' }
+          if (!(Select-String -Path installer/install.ps1 -Pattern 'habagent.exe' -Quiet)) { throw 'Installer does not target habagent.exe' }
