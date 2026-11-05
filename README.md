@@ -5,11 +5,11 @@ USE AT YOUR OWN RISK <3
 
 Local-only Windows activity collector and one-line date-range ZIP exporter.
 
-**Status: source prototype, not yet Windows-build-verified.** The authoring environment
-had no Rust compiler or Windows runtime; compile and run the included tests on Windows
-before relying on it for permanent monitoring. The SQLite schema and Sysmon XML were
-validated separately. This is not a kernel service, packet sniffer, security tool,
-parental control, or complete web-browsing history recorder.
+**Status: initial Rust collector with Windows compilation/unit-test coverage.**
+Windows compilation and the original installer have been confirmed; extended
+end-to-end collection (especially Sysmon permissions and reboot behavior) still
+needs verification on a real Windows machine. This is not a kernel service,
+packet sniffer, security tool, or complete web-browsing history recorder.
 
 ## What is implemented
 
@@ -33,9 +33,64 @@ records alone cannot reliably establish which websites you visited or how long
 you spent on them. Browser extension support will be an additional Windows-side
 feature, before the later Linux analyzer.
 
+## Quick start — one setup command
+
+From a **normal, non-elevated PowerShell** session in your already-cloned
+`habits` directory, update the source and run setup:
+
+```powershell
+git pull --ff-only
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+The setup command is safe to rerun after updates. It:
+
+1. Runs Rust tests and compiles release `habits.exe` and `habagent.exe`.
+2. Checks for Sysmon. When absent, it requests administrator approval **only
+   for Sysmon setup**, prefers built-in Windows Sysmon when available, or
+   downloads Sysinternals Sysmon directly from Microsoft and validates its
+   digital signature before installing. The approved Sysmon installation
+   accepts Microsoft's Sysmon EULA.
+3. Installs/updates the per-user `HabitsCollector` Scheduled Task (no Installed
+   Apps entry, shortcut, tray icon, or custom always-on Windows service).
+4. Starts the collector immediately and displays diagnostic `habits status`.
+
+Sysmon Event IDs **1, 3, 5, and 22** are enabled for **new** installations
+using `installer/sysmon-config.xml`. These supply process, connection, and
+DNS telemetry. The setup **does not replace an existing Sysmon configuration**
+or reinstall an existing Sysmon service. If a pre-existing configuration
+omits those events, you must explicitly merge the rules yourself; it may
+otherwise yield no network/DNS records.
+
+**Why administrator approval?** Sysmon installs a Microsoft-signed Windows
+service/driver. The Rust collector still runs **under your regular login**.
+Some Windows builds require a reboot to enable the optional Sysmon feature;
+if prompted, reboot and rerun the same setup command.
+
+`-ExecutionPolicy Bypass` applies to this one PowerShell process only; the
+installer does not change your machine's execution-policy settings. Review
+the repository scripts before running them. The Sysmon Operational log itself
+may include command lines and other metadata beyond what Habits retains;
+it is not a content-free upstream log.
+
+Use `habits status` from a **new terminal** after setup. Data resides in
+`%LOCALAPPDATA%\Habits\activity.sqlite`. If Sysmon reports an error, inspect
+`%LOCALAPPDATA%\Habits\agent-errors.log` and the Sysmon Operational log
+permissions. The installer does not silently change channel security ACLs.
+
+Optional setup switches for troubleshooting:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -SkipSysmon
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -SkipTests
+```
+
+`-SkipSysmon` is for intentional partial setup only: DNS/network/process
+collection will not work without Sysmon.
+
 ## Requirements
 
-- Windows 11 x64 (intended; the native collector has not been runtime-tested yet).
+- Windows 11 x64 (successful Rust compilation; end-to-end runtime validation ongoing).
 - A current Rust stable toolchain with Cargo and MSVC C++ build tools for native
   dependencies (SQLite bundled with `rusqlite`); see https://rustup.rs/ .
 - PowerShell 5.1+ for MSIX software inventory and optional scheduled-task installation.
@@ -55,7 +110,7 @@ cargo build --release
 This should produce `target\release\habits.exe` and
 `target\release\habagent.exe`.
 
-## Sysmon setup — explicit administrator operation
+## Manual Sysmon setup (optional; the quick start handles fresh installations)
 
 **Do not blindly replace an existing Sysmon configuration.** If you already use
 Sysmon for another purpose, merge these event types into your existing config
@@ -91,7 +146,7 @@ channel is present and review its read permissions, or run a controlled test
 with elevated permission. Avoid running the interactive agent under SYSTEM;
 that would prevent monitoring your foreground desktop session.
 
-## Install background agent
+## Manual agent install (optional; the quick start already runs this)
 
 In a **non-elevated** PowerShell session from the project directory:
 
@@ -137,8 +192,7 @@ The uninstaller leaves the activity database and Sysmon untouched. The
 scheduled task is not hidden: it should be easy to discover and disable
 whenever you choose. No popups or Add/Remove Programs entry are needed.
 
-If your PowerShell execution policy blocks the installer, review the script
-before allowing it to run. Don't disable execution policy system-wide.
+If execution policy blocks local scripts, use the quick-start `powershell.exe -ExecutionPolicy Bypass -File .\\setup.ps1` form rather than changing execution policy system-wide.
 
 ## Export a date range
 
