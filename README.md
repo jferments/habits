@@ -1,4 +1,4 @@
-# Habits (Windows collector) — Rust prototype v0.2
+# Habits — Windows collector and browser domain journal (Rust prototype)
 
 NOTE: THIS IS A THROWAWAY PROJECT THAT IS JUST BEING USED AS A ONE OFF SCRIPT FOR PERSONAL USE ... 
 USE AT YOUR OWN RISK <3
@@ -24,14 +24,23 @@ packet sniffer, security tool, or complete web-browsing history recorder.
 - Baseline, installed, updated, and removed software-change records.
 - Local SQLite database in WAL mode, in `%LOCALAPPDATA%\Habits\activity.sqlite`.
 - Quiet separate `habagent.exe` with no console window; a console CLI
-  `habits.exe` with `run`, `status`, `inventory`, and `export` commands.
+  `habits.exe` with `run`, `status`, `sites`, `app-domains`, `inventory`, and `export` commands.
+- Firefox and Edge MV3 domain journal add-ons, connected to a small
+  `habbridge.exe` native messaging process (no local HTTP server).
+- Timestamped browser top-level hostname visits and bounded active-tab
+  intervals, stored in SQLite without full URLs, queries, or titles.
+- Non-browser DNS lookups coalesced by **app/domain/minute** and network
+  connection records by **app/destination IP/port/hour** instead of
+  saving all raw network events.
 - Date-range ZIP containing filtered SQLite and `manifest.json` with SHA-256.
 - Per-user scheduled task and minimal Sysmon config template.
 
-**The Windows app does not yet know which browser tab is active.** DNS/connection
-records alone cannot reliably establish which websites you visited or how long
-you spent on them. Browser extension support will be an additional Windows-side
-feature, before the later Linux analyzer.
+**Browser domain tracking requires separately loading the Firefox or Edge
+extension.** The `setup.ps1` script installs the Rust bridge and registers
+native messaging, but does not silently install an extension into the browser.
+See [browser installation and verification](extensions/README.md). Browsers
+still require user installation consent; persistent Firefox installation
+requires signing (not yet performed). The add-ons do not capture URL paths.
 
 ## Quick start — one setup command
 
@@ -45,7 +54,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 
 The setup command is safe to rerun after updates. It:
 
-1. Runs Rust tests and compiles release `habits.exe` and `habagent.exe`.
+1. Runs Rust tests and compiles release `habits.exe`, `habagent.exe`, and
+   the transient browser native messaging host `habbridge.exe`.
 2. Checks for Sysmon. When absent, it requests administrator approval **only
    for Sysmon setup**, prefers built-in Windows Sysmon when available, or
    downloads Sysinternals Sysmon directly from Microsoft and validates its
@@ -53,7 +63,10 @@ The setup command is safe to rerun after updates. It:
    accepts Microsoft's Sysmon EULA.
 3. Installs/updates the per-user `HabitsCollector` Scheduled Task (no Installed
    Apps entry, shortcut, tray icon, or custom always-on Windows service).
-4. Starts the collector immediately and verifies the task is running and
+4. Registers per-user browser native messaging and copies unpacked add-on
+   source to stable folders. **You still need to load the add-ons in Firefox
+   and Edge** and register Edge's shown extension ID.
+5. Starts the collector immediately and verifies the task is running and
    SQLite heartbeat is fresh. If not, it runs the read-only diagnostic script
    and **fails setup** rather than falsely claiming success.
 
@@ -189,8 +202,8 @@ cargo test
 cargo build --release
 ```
 
-This should produce `target\release\habits.exe` and
-`target\release\habagent.exe`.
+This should produce `target\release\habits.exe`,
+`target\release\habagent.exe`, and `target\release\habbridge.exe`.
 
 ## Manual Sysmon setup (optional; the quick start handles fresh installations)
 
@@ -304,6 +317,8 @@ reconstruct inventory state. Exports do not overwrite existing ZIPs.
 
 ```powershell
 habits status
+habits sites --limit 50
+habits app-domains --limit 50
 habits inventory
 habits export --from YYYY-MM-DD --to YYYY-MM-DD [--output PATH]
 # troubleshooting (console visible):
@@ -353,7 +368,13 @@ That script does not delete your data and does not change or uninstall Sysmon.
 
 ## Storage overview
 
-- `process_events`, `dns_events`, `network_events`: timestamped Sysmon events.
+- `browser_visits`: **hostname + exact visit timestamp**, Firefox/Edge.
+- `browser_attention_intervals`: bounded active-tab time by hostname.
+- `app_domain_minutes`: non-browser DNS queries, by executable/host/minute.
+- `app_connection_hours`: non-browser endpoint counts by executable/IP/port/hour.
+- `process_events`: timestamped process events.
+- `dns_events`, `network_events`: legacy raw events from older collectors
+  are retained but new entries are **not** appended; no automatic data deletion.
 - `activity_intervals`: foreground PID/executable and idle estimates.
 - `software_current`, `software_changes`: software inventory and change log.
 - `meta`, `collector_errors`: source checkpoints, heartbeat, and diagnostics.
@@ -363,7 +384,9 @@ before we develop a GUI analyzer.
 
 ## Data safety
 
-The application does **not** capture keystrokes, browser titles, content,
-clipboard, screenshots, HTTP bodies, cookies, or passwords. No server is opened
+The application does **not** capture keystrokes, full URLs or page paths,
+browser titles, content, clipboard, screenshots, HTTP bodies, cookies, or passwords.
+Private/incognito tabs are excluded by design. WebExtensions log visit
+hostnames and approximate active-tab time after the user installs them. No server is opened
 and no network packets are modified. The setup changes only a scheduled task
 and, **if explicitly configured by you**, Sysmon settings.
