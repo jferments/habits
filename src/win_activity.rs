@@ -61,10 +61,6 @@ impl ForegroundMonitor {
         Ok(())
     }
 
-    pub fn flush(&mut self, conn: &Connection) -> Result<()> {
-        self.flush_at(conn, Utc::now())
-    }
-
     fn flush_at(&mut self, conn: &Connection, until: DateTime<Utc>) -> Result<()> {
         if let Some(current) = self.current.take() {
             if until > current.started_at && current.state.pid.is_some() {
