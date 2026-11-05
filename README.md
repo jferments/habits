@@ -130,6 +130,46 @@ Do not broaden the whole Event Log Readers group or replace existing channel
 security descriptors automatically. Sysmon's upstream log may contain
 sensitive command-line metadata.
 
+## Sysmon channel permission blocked (Access is denied / error 5)
+
+If `habits status` shows a **recent heartbeat**, and the diagnostic says
+`Sysmon / Running`, but `Sysmon status` reports **EvtQuery: Access is denied**
+then the Rust collector is running correctly and **only Sysmon ingestion is
+blocked**. The Windows collector runs with your ordinary interactive account;
+running it as SYSTEM or permanently elevated is **not** the fix.
+
+Windows allows read access to be granted on one Event Log channel without
+granting read access to every Event Log. The narrowest suitable permission is
+an **allow, READ (0x1)** rule for the intended user's Windows SID on
+`Microsoft-Windows-Sysmon/Operational`. This access can expose additional
+metadata contained in Sysmon's own upstream log, including process command
+lines, even though Habits stores fewer fields.
+
+**Administrator procedure** (do not run blindly on a shared or managed PC):
+
+1. In your ordinary PowerShell, run `whoami /user` to identify your account SID.
+2. In a separate administrator PowerShell, inspect the existing channel
+   descriptor with `wevtutil gl Microsoft-Windows-Sysmon/Operational`.
+3. Back up the original `channelAccess` SDDL string, then use Windows'
+   `wevtutil sl <channel> /ca:<updated-SDDL>` to add one allow-read (0x1)
+   entry for **that SID only**, preserving every existing ACE and any owner,
+   group or audit sections. Do not replace the descriptor with a canned one.
+   Microsoft documents these event-log access rights and the `wevtutil`
+   `/ca` option.
+4. From your **normal non-admin** PowerShell, confirm that
+   `Get-WinEvent -ListLog 'Microsoft-Windows-Sysmon/Operational'` no longer
+   fails, then run `habits status` after the collector's next poll.
+5. If access remains denied, inspect for an existing deny ACE or policies
+   managing the log; **do not weaken other log permissions**.
+
+The one-command setup intentionally **does not alter Sysmon security ACLs**.
+An existing installation is never reconfigured silently. For troubleshooting,
+run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installer\doctor.ps1`.
+
+The broad alternative of adding the account to the local
+`Event Log Readers` group may grant access to multiple channels and is
+not recommended for this per-user monitoring app.
+
 ## Requirements
 
 - Windows 11 x64 (successful Rust compilation; end-to-end runtime validation ongoing).
