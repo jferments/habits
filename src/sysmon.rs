@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use quick_xml::{events::Event, reader::Reader};
 use rusqlite::{params, Connection};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct SysmonEvent {
@@ -104,9 +104,16 @@ pub fn insert_events(conn: &mut Connection, events: &[SysmonEvent]) -> Result<()
     if events.is_empty() { return Ok(()); }
     let log_epoch: i64 = crate::db::get_meta(conn, "sysmon_epoch")?
         .as_deref().unwrap_or("0").parse().context("invalid Sysmon log epoch")?;
+    // The checkpoint advances in the SAME transaction as the rollups.
+    // This gives crash-safe exactly-once processing without persisting one
+    // receipt per noisy raw network event (which would defeat aggregation).
+    let checkpoint: i64 = crate::db::get_meta(conn,"sysmon_last_record_id")?
+        .as_deref().unwrap_or("0").parse()?;
     let tx = conn.transaction()?;
     let mut latest: Option<i64> = None;
+    let mut seen = HashSet::new();
     for ev in events {
+        if ev.record_id <= checkpoint || !seen.insert(ev.record_id) { continue; }
         latest = Some(latest.unwrap_or(0).max(ev.record_id));
         match ev.event_id {
             1 | 5 => {
@@ -122,11 +129,6 @@ pub fn insert_events(conn: &mut Connection, events: &[SysmonEvent]) -> Result<()
                 // Browser browsing history is captured by the extension;
                 // 3rd-party ad/telemetry subresource connections are noise.
                 if tracked_browser(&app) { continue; }
-                let inserted=tx.execute(
-                    "INSERT OR IGNORE INTO sysmon_rollup_seen(log_epoch,record_id) VALUES(?1,?2)",
-                    params![log_epoch, ev.record_id],
-                )?;
-                if inserted == 0 { continue; }
                 let ip=field(ev,"DestinationIp").unwrap_or("unknown");
                 let port=as_i64(ev,"DestinationPort").unwrap_or(0);
                 let protocol=field(ev,"Protocol").unwrap_or("unknown").to_ascii_lowercase();
@@ -146,11 +148,6 @@ pub fn insert_events(conn: &mut Connection, events: &[SysmonEvent]) -> Result<()
                 let app=executable_name(ev);
                 if tracked_browser(&app) { continue; }
                 let Some(host)=field(ev,"QueryName").and_then(dns_host) else { continue };
-                let inserted=tx.execute(
-                    "INSERT OR IGNORE INTO sysmon_rollup_seen(log_epoch,record_id) VALUES(?1,?2)",
-                    params![log_epoch, ev.record_id],
-                )?;
-                if inserted == 0 { continue; }
                 let minute=format!("{}:00.000Z",&ev.timestamp_utc[..16]);
                 tx.execute(
                     r#"INSERT INTO app_domain_minutes
@@ -317,6 +314,7 @@ mod tests {
         let count:i64 = conn.query_row("SELECT COUNT(*) FROM app_domain_minutes",[],|r|r.get(0)).unwrap();
         assert_eq!(count,1);
         crate::db::set_meta(&conn, "sysmon_epoch", "1").unwrap();
+        crate::db::set_meta(&conn, "sysmon_last_record_id", "0").unwrap();
         let repeated = SysmonEvent { record_id: 2, event_id: 22,
             timestamp_utc:"2026-11-05T19:05:01.123Z".into(),
             data: HashMap::from([("QueryName".into(), "new.example.com".into())]) };
