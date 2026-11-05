@@ -303,6 +303,43 @@ mod tests {
         assert_eq!(event.timestamp_utc,"2026-11-04T19:05:01.123Z");
     }
     #[test]
+    fn rolls_up_non_browser_connections_and_ignores_browser_subresources() {
+        let mut db=Connection::open_in_memory().unwrap();
+        crate::db::init(&db).unwrap();
+        let event=|record_id,event_id,image:&str| SysmonEvent {
+            record_id,event_id,timestamp_utc:"2026-11-04T22:10:30.000Z".into(),
+            data:HashMap::from([
+                ("Image".to_string(),image.to_string()),
+                ("DestinationIp".to_string(),"93.184.215.14".to_string()),
+                ("DestinationPort".to_string(),"443".to_string()),
+                ("Protocol".to_string(),"tcp".to_string()),
+                ("QueryName".to_string(),"example.com".to_string()),
+            ]),
+        };
+        let batch=vec![
+            event(10,3,r"C:\\Apps\\Spotify.exe"),
+            event(11,3,r"C:\\Apps\\Spotify.exe"),
+            event(12,22,r"C:\\Apps\\Spotify.exe"),
+            event(13,3,r"C:\\Program Files\\Mozilla Firefox\\firefox.exe"),
+            event(14,22,r"C:\\Program Files\\Mozilla Firefox\\firefox.exe"),
+        ];
+        insert_events(&mut db,&batch).unwrap();
+        insert_events(&mut db,&batch).unwrap();
+        let (buckets,connections):(i64,i64)=db.query_row(
+            "SELECT count(*),sum(connection_count) FROM app_connection_hours",[],
+            |r|Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!((buckets,connections),(1,2));
+        let (dns_buckets,queries):(i64,i64)=db.query_row(
+            "SELECT count(*),sum(query_count) FROM app_domain_minutes",[],
+            |r|Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!((dns_buckets,queries),(1,1));
+        let raw:i64=db.query_row("SELECT count(*) FROM network_events",[],|r|r.get(0)).unwrap();
+        assert_eq!(raw,0,"new collector should not append raw connection noise");
+    }
+
+    #[test]
     fn stored_events_are_deduplicated() {
         let mut conn = Connection::open_in_memory().unwrap();
         crate::db::init(&conn).unwrap();
