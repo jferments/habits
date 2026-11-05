@@ -47,8 +47,8 @@ try {
                 } else {
                     # Elevate only the short Sysmon helper. Compile and per-user
                     # installation stay in the original, unelevated account.
-                    $Args = '-NoProfile -ExecutionPolicy Bypass -File "' + $Helper + '"'
-                    $Process = Start-Process -FilePath $PowerShell -ArgumentList $Args -Verb RunAs -Wait -PassThru
+                    $ElevationArgs = '-NoProfile -ExecutionPolicy Bypass -File "' + $Helper + '"'
+                    $Process = Start-Process -FilePath $PowerShell -ArgumentList $ElevationArgs -Verb RunAs -Wait -PassThru
                     $Code = $Process.ExitCode
                 }
                 if ($Code -ne 0) {
