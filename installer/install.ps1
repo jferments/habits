@@ -4,14 +4,16 @@
 param(
     [switch]$ConfigureSysmon,
     [string]$SysmonExe = 'Sysmon64.exe',
-    [switch]$SkipSysmonReminder
+    [switch]$SkipSysmonReminder,
+    [string]$EdgeExtensionId = ''
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $Release = Join-Path $Root 'target\release'
 $SourceCli = Join-Path $Release 'habits.exe'
 $SourceAgent = Join-Path $Release 'habagent.exe'
-if (!(Test-Path $SourceCli) -or !(Test-Path $SourceAgent)) {
+$SourceBridge = Join-Path $Release 'habbridge.exe'
+if (!(Test-Path $SourceCli) -or !(Test-Path $SourceAgent) -or !(Test-Path $SourceBridge)) {
     throw 'Build first: cargo build --release'
 }
 # Intentionally install as an unlisted, per-user background tool: no MSI/MSIX,
@@ -27,7 +29,7 @@ if ($CurrentTask) {
 }
 # A stopped task may take a moment to release the executable during upgrades.
 # Retry the copy rather than failing spuriously with a file-in-use error.
-foreach ($Source in @($SourceCli, $SourceAgent)) {
+foreach ($Source in @($SourceCli, $SourceAgent, $SourceBridge)) {
     $Destination = Join-Path $Install (Split-Path -Leaf $Source)
     $Copied = $false
     for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
@@ -55,6 +57,21 @@ $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seco
     -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable
 Register-ScheduledTask -TaskName 'HabitsCollector' -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Force | Out-Null
+# Browser extension files live at stable user-local paths for unpacked installs.
+$ExtensionSrc = Join-Path $Root 'extensions'
+$ExtensionDest = Join-Path $env:LOCALAPPDATA 'Habits\extensions'
+foreach ($Browser in @('firefox','edge')) {
+    $From = Join-Path $ExtensionSrc $Browser
+    $To = Join-Path $ExtensionDest $Browser
+    if (!(Test-Path $From)) { throw "Missing browser extension folder: $From" }
+    New-Item -ItemType Directory -Path $To -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $From 'manifest.json') -Destination $To -Force
+    Copy-Item -LiteralPath (Join-Path $From 'background.js') -Destination $To -Force
+}
+& (Join-Path $PSScriptRoot 'register-browser-hosts.ps1') -EdgeExtensionId $EdgeExtensionId
+if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Native messaging registration failed' }
+Write-Host ("Browser add-ons copied to " + $ExtensionDest)
+
 # Add CLI folder to user's PATH without changing the machine PATH.
 $OldPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $Entries = @($OldPath -split ';' | Where-Object { $_ })
@@ -72,6 +89,8 @@ if ($ConfigureSysmon) {
 Write-Host "Installed CLI and agent into $Install"
 Write-Host 'Task: HabitsCollector (runs quietly at the next interactive logon)'
 Write-Host 'No Installed Apps / Add or Remove Programs entry is registered.'
+Write-Host 'Firefox: load temporary add-on from %LOCALAPPDATA%\Habits\extensions\firefox\manifest.json'
+Write-Host 'Edge: load unpacked folder %LOCALAPPDATA%\Habits\extensions\edge and register its ID.'
 Write-Host 'Run now: Start-ScheduledTask -TaskName HabitsCollector'
 Write-Host 'Open a new terminal, then: habits status'
 if (!$ConfigureSysmon -and !$SkipSysmonReminder) {
