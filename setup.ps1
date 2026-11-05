@@ -4,7 +4,8 @@
 [CmdletBinding()]
 param(
     [switch]$SkipSysmon,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [string]$EdgeExtensionId = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,7 +26,7 @@ try {
             & $Cargo.Source test --all-targets
             if ($LASTEXITCODE -ne 0) { throw 'cargo test failed.' }
         }
-        Write-Host '==> Building habits.exe and habagent.exe'
+        Write-Host '==> Building habits.exe, habagent.exe, and habbridge.exe'
         & $Cargo.Source build --release
         if ($LASTEXITCODE -ne 0) { throw 'cargo build --release failed.' }
 
@@ -60,7 +61,7 @@ try {
         }
 
         Write-Host '==> Installing the current-user startup task'
-        & (Join-Path $Root 'installer\install.ps1') -SkipSysmonReminder
+        & (Join-Path $Root 'installer\install.ps1') -SkipSysmonReminder -EdgeExtensionId $EdgeExtensionId
 
         Write-Host '==> Starting the windowless background collector'
         Start-ScheduledTask -TaskName 'HabitsCollector' -ErrorAction Stop
@@ -111,6 +112,7 @@ try {
         }
         Write-Host 'No Add/Remove Programs entry or tray icon is created.'
         Write-Host 'Open a NEW terminal to use: habits status'
+        Write-Host 'Browser setup instructions: extensions\\README.md'
         Write-Host 'To export later: habits export --from YYYY-MM-DD --to YYYY-MM-DD'
     } finally {
         Pop-Location
