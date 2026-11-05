@@ -3,7 +3,7 @@
 // The extension/bridge are optional: their absence never affects habagent.exe.
 'use strict';
 const HOST_NAME = 'org.jferments.habits';
-const BROWSER_NAME = (typeof browser !== 'undefined' && typeof browser.runtime !== 'undefined')
+const BROWSER_NAME = chrome.runtime.getURL('').startsWith('moz-extension:')
     ? 'firefox' : 'edge';
 const MAX_QUEUED = 20000;
 const state = { queue:[], ready:false, saving:false, dirty:false,
