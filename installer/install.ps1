@@ -44,10 +44,16 @@ foreach ($Source in @($SourceCli, $SourceAgent)) {
 $AgentPath = Join-Path $Install 'habagent.exe'
 # Run on the current user's next logon. The agent has Windows GUI subsystem,
 # intentionally no console window; scheduler process does not require elevation.
-$Action = New-ScheduledTaskAction -Execute $AgentPath
-$Trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
-$Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-$Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew
+$Identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$Action = New-ScheduledTaskAction -Execute $AgentPath -WorkingDirectory $Install
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $Identity
+$Principal = New-ScheduledTaskPrincipal -UserId $Identity -LogonType Interactive -RunLevel Limited
+# Laptop battery conditions otherwise cause a task to remain Queued without
+# launching the collector. Keep it interactive (foreground tracking needs the
+# user session), without a time limit or idle/network requirements.
+$Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+    -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable
 Register-ScheduledTask -TaskName 'HabitsCollector' -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Force | Out-Null
 # Add CLI folder to user's PATH without changing the machine PATH.
 $OldPath = [Environment]::GetEnvironmentVariable('Path', 'User')
