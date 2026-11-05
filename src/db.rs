@@ -16,6 +16,20 @@ pub fn open(path: &Path) -> Result<Connection> {
 
 pub fn init(conn: &Connection) -> Result<()> {
     conn.execute_batch(r#"
+        -- Optional add-on-independent history snapshots (never modify the browser DB).
+        CREATE TABLE IF NOT EXISTS browser_history_visits (
+            browser TEXT NOT NULL,
+            profile_key TEXT NOT NULL,
+            source_visit_id INTEGER NOT NULL,
+            visited_ms INTEGER NOT NULL,
+            visited_utc TEXT NOT NULL,
+            host TEXT NOT NULL,
+            url TEXT NOT NULL,
+            title TEXT,
+            PRIMARY KEY(browser,profile_key,source_visit_id)
+        );
+        CREATE INDEX IF NOT EXISTS ix_browser_history_time ON browser_history_visits(visited_utc);
+        CREATE INDEX IF NOT EXISTS ix_browser_history_url_time ON browser_history_visits(browser,url,visited_ms);
         CREATE TABLE IF NOT EXISTS browser_seen_events (
             event_id TEXT PRIMARY KEY,
             created_ms INTEGER NOT NULL
@@ -244,7 +258,14 @@ pub fn show_status(path: &Path) -> Result<()> {
     }
     let browser_visits: i64 = conn.query_row("SELECT count(*) FROM browser_visits", [], |r|r.get(0))?;
     let browser_intervals: i64 = conn.query_row("SELECT count(*) FROM browser_attention_intervals", [], |r|r.get(0))?;
-    println!("Browser visits        {browser_visits}");
+    println!("Browser add-on visits  {browser_visits}");
+    let history_visits:i64=conn.query_row("SELECT count(*) FROM browser_history_visits",[],|r|r.get(0))?;
+    println!("Browser history visits {history_visits}");
+    for name in ["firefox","edge"] {
+        let status=get_meta(&conn,&format!("browser_history_{name}_status"))?
+            .unwrap_or_else(||"not scanned yet".into());
+        println!("{name} history status: {status}");
+    }
     println!("Browser attention     {browser_intervals}");
     let app_domains: i64 = conn.query_row("SELECT count(*) FROM app_domain_minutes", [], |r|r.get(0))?;
     let app_connections: i64 = conn.query_row("SELECT count(*) FROM app_connection_hours", [], |r|r.get(0))?;
@@ -259,19 +280,33 @@ pub fn show_status(path: &Path) -> Result<()> {
 pub fn list_browser_visits(path: &Path, limit: usize) -> Result<()> {
     if !path.exists() { println!("No Habits database yet."); return Ok(()); }
     let conn=Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    println!("Browser visits (local timestamps; hostname only):");
+    println!("Browser visits (local timestamps; add-on + read-only browser history):");
+    // A visit can appear in both the add-on and the browser's History DB.
+    // Prefer the add-on event when the same URL was seen within three seconds.
+    // This affects only display; both provenance datasets remain independent.
     let mut stmt=conn.prepare(
-        "SELECT visited_utc,browser,host,url,title FROM browser_visits ORDER BY visited_utc DESC LIMIT ?1"
+        "SELECT visited_utc,browser,host,url,title,source FROM (
+           SELECT e.visited_utc,e.browser,e.host,e.url,e.title,'addon' AS source
+           FROM browser_visits e
+           UNION ALL
+           SELECT h.visited_utc,h.browser,h.host,h.url,h.title,'history' AS source
+           FROM browser_history_visits h
+           WHERE NOT EXISTS(
+             SELECT 1 FROM browser_visits e
+             WHERE e.browser=h.browser AND e.url=h.url
+               AND abs(unixepoch(e.visited_utc)-unixepoch(h.visited_utc))<=3
+           )
+         ) ORDER BY visited_utc DESC LIMIT ?1"
     )?;
     let rows=stmt.query_map([limit.min(1000) as i64], |r| Ok((
         r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,
-        r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?
+        r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,String>(5)?
     )))?;
     for row in rows {
-        let (utc,browser,host,url,title)=row?;
+        let (utc,browser,host,url,title,source)=row?;
         let local=chrono::DateTime::parse_from_rfc3339(&utc)?
             .with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %:z").to_string();
-        println!("{local}  {browser:8}  {host}");
+        println!("{local}  {browser:8}  {host}  ({source})");
         if let Some(url) = url { println!("    URL: {url}"); }
         if let Some(title) = title { println!("    Title: {title}"); }
     }
