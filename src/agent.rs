@@ -17,6 +17,7 @@ pub fn run() -> Result<()> {
     crate::db::set_meta(&conn, "last_heartbeat_utc", &crate::util::timestamp())?;
     let mut foreground = crate::win_activity::ForegroundMonitor::new(120);
     let mut last_event_poll = Instant::now() - Duration::from_secs(6);
+    let mut last_history_poll = Instant::now() - Duration::from_secs(65);
     let mut last_heartbeat = Instant::now() - Duration::from_secs(11);
     let mut last_inventory = Instant::now() - Duration::from_secs(6 * 3600 + 1);
     let mut last_sysmon_error: Option<String> = None;
@@ -51,6 +52,17 @@ pub fn run() -> Result<()> {
                 }
             }
             last_event_poll = Instant::now();
+        }
+
+        // Browser history is OPTIONAL. SQLite read locks / schema changes /
+        // missing browser profiles cannot terminate the base agent.
+        if last_history_poll.elapsed() >= Duration::from_secs(60) {
+            if let Err(error) = crate::browser_history::poll(&mut conn, 30) {
+                let _ = crate::db::set_meta(
+                    &conn, "browser_history_status", &format!("error: {error:#}")
+                );
+            }
+            last_history_poll = Instant::now();
         }
 
         if last_inventory.elapsed() >= Duration::from_secs(6 * 3600) {
