@@ -198,6 +198,7 @@ function syncAttention() {
 // Event registrations must be synchronous for an Edge MV3 service worker.
 chrome.webNavigation.onCommitted.addListener(recordVisit);
 chrome.webNavigation.onHistoryStateUpdated.addListener(recordVisit);
+chrome.webNavigation.onReferenceFragmentUpdated.addListener(recordVisit);
 chrome.tabs.onActivated.addListener(syncAttention);
 chrome.tabs.onUpdated.addListener((id, change, tab) => {
     if (change.title || change.status === 'complete') recordTitle(tab);
