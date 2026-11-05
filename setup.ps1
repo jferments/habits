@@ -64,26 +64,40 @@ try {
 
         Write-Host '==> Starting the windowless background collector'
         Start-ScheduledTask -TaskName 'HabitsCollector' -ErrorAction Stop
-        # Leave time for a heartbeat and first Sysmon read.
-        Start-Sleep -Seconds 12
-        $Task = Get-ScheduledTask -TaskName 'HabitsCollector' -ErrorAction Stop
-        if ($Task.State -ne 'Running') {
-            Write-Warning "HabitsCollector state is '$($Task.State)', not Running. Check Task Scheduler and %LOCALAPPDATA%\Habits\agent-errors.log."
-        }
+        # A successful Start-ScheduledTask call only queues the request. Check for
+        # an actual running task AND a freshly updated SQLite heartbeat.
         $Cli = Join-Path $Root 'target\release\habits.exe'
+        $Database = Join-Path $env:LOCALAPPDATA 'Habits\activity.sqlite'
+        $Healthy = $false
+        $Status = @()
+        $Task = $null
+        for ($Attempt = 1; $Attempt -le 20; $Attempt++) {
+            Start-Sleep -Seconds 1
+            $Task = Get-ScheduledTask -TaskName 'HabitsCollector' -ErrorAction Stop
+            if ($Task.State -ne 'Running' -or -not (Test-Path -LiteralPath $Database)) { continue }
+            $Status = @(& $Cli status 2>&1)
+            if ($LASTEXITCODE -eq 0 -and (($Status | Out-String) -match 'Last heartbeat: .*\(recent\)')) {
+                $Healthy = $true
+                break
+            }
+        }
+        if (-not $Healthy) {
+            Write-Warning "HabitsCollector failed startup verification. Task state: $($Task.State); database exists: $(Test-Path -LiteralPath $Database)."
+            & (Join-Path $Root 'installer\doctor.ps1')
+            throw 'Background collector did not start and produce a fresh database heartbeat. Setup is NOT complete.'
+        }
         Write-Host '==> Collector status'
-        $Status = & $Cli status 2>&1
         $Status | ForEach-Object { Write-Host $_ }
-        if ($LASTEXITCODE -ne 0) { throw 'habits status failed.' }
         if (($Status | Out-String) -match 'Sysmon status: error:') {
-            Write-Warning 'Sysmon event ingestion is reporting an error. Check the error and the Sysmon Operational log permissions.'
+            Write-Warning 'Sysmon event ingestion is reporting an error. Foreground tracking should still work.'
         }
 
         if (-not $SkipSysmon) {
             try {
                 $null = Get-WinEvent -ListLog 'Microsoft-Windows-Sysmon/Operational' -ErrorAction Stop
             } catch {
-                Write-Warning 'Your non-elevated account cannot inspect the Sysmon Operational channel. The collector may need explicit Event Log read permissions.'
+                Write-Warning ("Unable to inspect Sysmon Operational channel: " + $_.Exception.Message)
+                Write-Warning 'This is a separate Sysmon access/availability issue; the collector itself is now running.'
             }
         }
         Write-Host ''
@@ -95,6 +109,7 @@ try {
         Pop-Location
     }
 } catch {
-    Write-Error "Habits setup failed: $($_.Exception.Message)"
+    Write-Host ("Habits setup failed: " + $_.Exception.Message) -ForegroundColor Red
+    Write-Host 'For read-only diagnostics, run: powershell.exe -NoProfile -File .\installer\doctor.ps1'
     exit 1
 }
