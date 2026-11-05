@@ -1,9 +1,9 @@
 # Habits Domain Journal — Firefox and Microsoft Edge
 
 This is a local-only WebExtension and a Rust native messaging bridge. It records
-top-level **hostnames** and their visit timestamps, plus bounded time during
-which a hostname was in the focused browser tab. It never sends data to a
-remote server.
+top-level **page URLs, page titles, hostnames and visit timestamps**, plus bounded
+time during which a hostname was in the focused browser tab. It never sends
+data to a remote server and never reads page bodies or DOM content.
 
 ## Install / update the native bridge (Windows)
 
@@ -67,9 +67,11 @@ cannot be assumed to be installed/authorized just because `setup.ps1` succeeded.
 ## What gets captured
 
 - `browser_visits`: each HTTP(S) top-level navigation (including SPA
-  history updates). `browser`, `host`, timestamp, tab/window IDs and an
-  event ID. Repeat navigations to the same host get distinct visit records,
-  except immediate duplicate navigation notifications.
+  history/fragment updates). Stores `browser`, `host`, **full URL**, **page
+  title**, timestamp, tab/window IDs and an event ID. Titles often arrive
+  after the initial navigation record and update that visit asynchronously.
+  Repeat navigations to the same host get distinct visit records, except
+  immediate duplicate navigation notifications.
 - `browser_attention_intervals`: active-tab hostname, start and bounded
   end timestamps. The add-on sends focus changes and approximately
   30-second heartbeats. On abrupt exit or sleep, an interval never counts
@@ -88,8 +90,14 @@ measurement of cognition. Visits start **when the extension is loaded**:
 we do not scrape the prior full browser-history database.
 
 Private/incognito tabs are deliberately **not collected**. Non-HTTP(S)
-pages and internal browser pages are excluded. URL paths, parameters,
-fragments, titles, cookies, form data, and page bodies are **never stored**.
+pages and internal browser pages are excluded. The recorded data includes
+page titles and **full URLs including paths, queries, and fragments**;
+URL-embedded usernames and passwords are removed. This is intentionally
+more sensitive than hostname-only logging: search terms, document IDs, and
+even authentication or reset tokens can appear in URL parameters/fragments.
+Protect your local SQLite database and exported ZIPs accordingly.
+**No page bodies, DOM text, form inputs, cookies, or screenshots** are read
+or stored. Browser APIs supply only the tab's metadata.
 The extension buffers up to 20,000 unsent events locally when the bridge
 is unavailable. Overflow is indicated with a red `!` badge; it can lose
 the oldest events, so this is not guaranteed lossless if offline for
@@ -112,3 +120,19 @@ in `about:debugging`.
 
 The separate `habbridge.exe` process lives only while a browser is
 connected to it; `habagent.exe` remains the quiet startup collector.
+
+## Optional integration / failure isolation
+
+The standalone `habagent.exe` task **never depends on Firefox, Edge, any
+extension, or the native messaging process**. If an extension crashes, is
+disabled, is removed, loses access, or fails to start, the agent continues
+to collect foreground activity, software changes, and Sysmon rollups.
+No browser information is invented for periods when the extension is absent.
+
+The core install is completed before optional browser files are copied and
+registered. Failure to install or update an extension or `habbridge.exe` is
+reported as a warning, not a fatal collector-installation error. Native
+messaging uses separate on-demand processes and SQLite WAL transactions,
+so extension faults do not propagate to the Task Scheduler process.
+A temporarily inaccessible bridge buffers events in browser-local storage
+subject to the queue limit above.
