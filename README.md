@@ -29,7 +29,7 @@ packet sniffer, security tool, or complete web-browsing history recorder.
   `habbridge.exe` native messaging process (no local HTTP server).
 - Timestamped browser top-level visits with **full URL, page title, domain**,
   and bounded active-tab intervals. The extension reads no page contents.
-- Non-browser DNS lookups coalesced by **app/domain/minute** and network
+- DNS lookups from all apps (including browsers) coalesced by **app/domain/minute** and network
   connection records by **app/destination IP/port/hour** instead of
   saving all raw network events.
 - Date-range ZIP containing filtered SQLite and `manifest.json` with SHA-256.
@@ -374,8 +374,8 @@ That script does not delete your data and does not change or uninstall Sysmon.
 
 - `browser_visits`: **full URL, page title, hostname and visit timestamp**, Firefox/Edge.
 - `browser_attention_intervals`: bounded active-tab time by hostname.
-- `app_domain_minutes`: non-browser DNS queries, by executable/host/minute.
-- `app_connection_hours`: non-browser endpoint counts by executable/IP/port/hour.
+- `app_domain_minutes`: per-app DNS queries (including browsers), by executable/host/minute.
+- `app_connection_hours`: per-app endpoint counts (including browsers) by executable/IP/port/hour.
 - `process_events`: timestamped process events.
 - `dns_events`, `network_events`: legacy raw events from older collectors
   are retained but new entries are **not** appended; no automatic data deletion.
