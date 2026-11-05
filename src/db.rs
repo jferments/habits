@@ -239,3 +239,44 @@ pub fn show_status(path: &Path) -> Result<()> {
     println!("Sysmon checkpoint: {}", get_meta(&conn, "sysmon_last_record_id")?.as_deref().unwrap_or("uninitialized"));
     Ok(())
 }
+
+
+pub fn list_browser_visits(path: &Path, limit: usize) -> Result<()> {
+    if !path.exists() { println!("No Habits database yet."); return Ok(()); }
+    let conn=Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    println!("Browser visits (local timestamps; hostname only):");
+    let mut stmt=conn.prepare(
+        "SELECT visited_utc,browser,host FROM browser_visits ORDER BY visited_utc DESC LIMIT ?1"
+    )?;
+    let rows=stmt.query_map([limit.min(1000) as i64], |r| Ok((
+        r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?
+    )))?;
+    for row in rows {
+        let (utc,browser,host)=row?;
+        let local=chrono::DateTime::parse_from_rfc3339(&utc)?
+            .with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %:z").to_string();
+        println!("{local}  {browser:8}  {host}");
+    }
+    Ok(())
+}
+
+pub fn list_app_domains(path: &Path, limit: usize) -> Result<()> {
+    if !path.exists() { println!("No Habits database yet."); return Ok(()); }
+    let conn=Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    println!("Non-browser DNS observations (not confirmed network connections):");
+    let mut stmt=conn.prepare(
+        "SELECT last_utc,app,host,query_count FROM app_domain_minutes
+         ORDER BY last_utc DESC LIMIT ?1"
+    )?;
+    let rows=stmt.query_map([limit.min(1000) as i64], |r| Ok((
+        r.get::<_,String>(0)?,r.get::<_,String>(1)?,
+        r.get::<_,String>(2)?,r.get::<_,i64>(3)?
+    )))?;
+    for row in rows {
+        let (utc,app,host,count)=row?;
+        let local=chrono::DateTime::parse_from_rfc3339(&utc)?
+            .with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %:z").to_string();
+        println!("{local}  {app:20}  {host}  ({count} lookups/min bucket)");
+    }
+    Ok(())
+}
